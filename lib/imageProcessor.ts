@@ -2,10 +2,9 @@
 
 export interface ImageProcessingOptions {
     format?: "webp" | "avif" | "png" | "jpeg";
-    quality?: number; // 0-100
+    quality?: number; // 0-100 (використовується тільки якщо maxSizeKB не вказано)
     cornerRadius?: number; // в пікселях
-    maxSizeKB?: number; // максимальний розмір файлу в КБ
-    compressionPercent?: number; // відсоток стиснення (0-100)
+    maxSizeKB?: number; // максимальний розмір файлу в КБ (якщо вказано, quality ігнорується)
     maintainAspectRatio?: boolean;
     maxWidth?: number;
     maxHeight?: number;
@@ -15,10 +14,12 @@ export interface ProcessedImage {
     blob: Blob;
     fileName: string;
     originalName: string;
+    originalSize: number;
     size: number;
     width: number;
     height: number;
     format: string;
+    appliedQuality: number; // фактична якість, яка була застосована
 }
 
 export class ImageProcessor {
@@ -31,21 +32,40 @@ export class ImageProcessor {
     ): Promise<ProcessedImage> {
         const {
             format = "webp",
-            quality = 85,
+            quality = 80, // Змінено дефолт на 80 для кращої компресії
             cornerRadius = 0,
             maxSizeKB,
-            compressionPercent,
             maintainAspectRatio = true,
             maxWidth,
             maxHeight,
         } = options;
+
+        // Перевіряємо чи потрібна взагалі обробка
+        const needsProcessing =
+            cornerRadius > 0 || maxWidth || maxHeight || maxSizeKB;
+        const originalFormat = file.type.replace("image/", "");
+
+        // Якщо формат співпадає і обробка не потрібна, просто змінюємо якість
+        if (originalFormat === format && !needsProcessing) {
+            // Все одно обробляємо через canvas для зміни якості
+        }
+
+        // Перевіряємо підтримку формату
+        if (format === "avif") {
+            const supported = await this.checkFormatSupport("avif");
+            if (!supported) {
+                throw new Error(
+                    "AVIF формат не підтримується вашим браузером. Спробуйте WebP або PNG.",
+                );
+            }
+        }
 
         // Завантаження зображення
         const img = await this.loadImage(file);
 
         // Створення canvas
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d")!;
+        const ctx = canvas.getContext("2d", { alpha: true })!;
 
         // Розрахунок розмірів
         const { width, height } = this.calculateDimensions(
@@ -59,33 +79,37 @@ export class ImageProcessor {
         canvas.width = width;
         canvas.height = height;
 
+        // Очищуємо canvas з прозорим фоном
+        ctx.clearRect(0, 0, width, height);
+
         // Застосування закруглених кутів
         if (cornerRadius > 0) {
-            this.applyRoundedCorners(ctx, width, height, cornerRadius);
+            // Обмежуємо радіус до половини найменшої сторони для правильного круглого зображення
+            const maxRadius = Math.min(width, height) / 2;
+            const effectiveRadius = Math.min(cornerRadius, maxRadius);
+            this.applyRoundedCorners(ctx, width, height, effectiveRadius);
             ctx.clip();
         }
 
         // Малювання зображення
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Конвертація в потрібний формат
-        let finalQuality = quality / 100;
+        let blob: Blob;
+        let appliedQuality: number;
 
-        // Якщо вказано відсоток стиснення
-        if (compressionPercent !== undefined) {
-            finalQuality = 1 - compressionPercent / 100;
-        }
-
-        let blob = await this.canvasToBlob(canvas, format, finalQuality);
-
-        // Якщо вказано максимальний розмір - стискаємо до досягнення
-        if (maxSizeKB && blob.size > maxSizeKB * 1024) {
-            blob = await this.compressToSize(
+        // Якщо вказано максимальний розмір - шукаємо оптимальну якість
+        if (maxSizeKB !== undefined) {
+            const result = await this.compressToSize(
                 canvas,
                 format,
                 maxSizeKB * 1024,
-                finalQuality,
             );
+            blob = result.blob;
+            appliedQuality = result.quality;
+        } else {
+            // Використовуємо вказану якість
+            appliedQuality = quality;
+            blob = await this.canvasToBlob(canvas, format, quality / 100);
         }
 
         // Генерація імені файлу
@@ -95,10 +119,12 @@ export class ImageProcessor {
             blob,
             fileName,
             originalName: file.name,
+            originalSize: file.size,
             size: blob.size,
             width,
             height,
             format,
+            appliedQuality,
         };
     }
 
@@ -234,12 +260,33 @@ export class ImageProcessor {
         quality: number,
     ): Promise<Blob> {
         return new Promise((resolve, reject) => {
+            // PNG потребує спеціальної обробки
+            if (format === "png" && quality < 1.0) {
+                this.compressPNG(canvas, quality).then(resolve).catch(reject);
+                return;
+            }
+
+            // Для інших форматів використовуємо стандартний quality
             canvas.toBlob(
                 (blob) => {
                     if (blob) {
+                        // Перевіряємо чи формат реально підтримується
+                        // AVIF часто повертає blob, але не стискає його правильно
+                        if (format === "avif" && blob.size === 0) {
+                            reject(
+                                new Error(
+                                    "AVIF формат не підтримується вашим браузером",
+                                ),
+                            );
+                            return;
+                        }
                         resolve(blob);
                     } else {
-                        reject(new Error("Не вдалося створити blob"));
+                        reject(
+                            new Error(
+                                `Не вдалося створити blob для формату ${format}`,
+                            ),
+                        );
                     }
                 },
                 `image/${format}`,
@@ -249,32 +296,119 @@ export class ImageProcessor {
     }
 
     /**
-     * Стиснення до заданого розміру
+     * Агресивна компресія PNG через зменшення кольорової палітри
+     */
+    private static async compressPNG(
+        sourceCanvas: HTMLCanvasElement,
+        quality: number,
+    ): Promise<Blob> {
+        const width = sourceCanvas.width;
+        const height = sourceCanvas.height;
+
+        // Отримуємо дані пікселів
+        const sourceCtx = sourceCanvas.getContext("2d", {
+            alpha: true,
+            willReadFrequently: true,
+        })!;
+        const imageData = sourceCtx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+
+        // Квантизація кольорів залежно від якості
+        // quality 1.0 = без квантизації
+        // quality 0.5 = агресивна квантизація
+        // quality 0.1 = максимальна компресія
+
+        let colorDepth: number;
+        if (quality >= 0.9) {
+            colorDepth = 256; // повна палітра
+        } else if (quality >= 0.7) {
+            colorDepth = 128; // хороша якість
+        } else if (quality >= 0.5) {
+            colorDepth = 64; // середня якість
+        } else if (quality >= 0.3) {
+            colorDepth = 32; // низька якість
+        } else {
+            colorDepth = 16; // мінімальна якість
+        }
+
+        const step = Math.floor(256 / colorDepth);
+
+        // Квантизуємо кожен піксель
+        for (let i = 0; i < data.length; i += 4) {
+            // Квантизація RGB (залишаємо альфа-канал без змін для прозорості)
+            data[i] = Math.round(data[i] / step) * step; // R
+            data[i + 1] = Math.round(data[i + 1] / step) * step; // G
+            data[i + 2] = Math.round(data[i + 2] / step) * step; // B
+            // data[i + 3] - Alpha залишаємо як є
+        }
+
+        // Створюємо новий canvas з обробленими даними
+        const resultCanvas = document.createElement("canvas");
+        resultCanvas.width = width;
+        resultCanvas.height = height;
+        const resultCtx = resultCanvas.getContext("2d", { alpha: true })!;
+        resultCtx.putImageData(imageData, 0, 0);
+
+        // Конвертуємо в blob
+        return new Promise((resolve, reject) => {
+            resultCanvas.toBlob((blob) => {
+                if (blob) {
+                    resolve(blob);
+                } else {
+                    reject(new Error("Не вдалося створити PNG blob"));
+                }
+            }, "image/png");
+        });
+    }
+
+    /**
+     * Стиснення до заданого розміру з пошуком оптимальної якості
      */
     private static async compressToSize(
         canvas: HTMLCanvasElement,
         format: string,
         targetSize: number,
-        initialQuality: number,
-    ): Promise<Blob> {
-        let quality = initialQuality;
-        let blob: Blob;
+    ): Promise<{ blob: Blob; quality: number }> {
+        // Бінарний пошук оптимальної якості
+        let minQuality = 0.1;
+        let maxQuality = 1.0;
+        let bestBlob: Blob | null = null;
+        let bestQuality = 0;
+        const maxAttempts = 15;
         let attempts = 0;
-        const maxAttempts = 10;
 
-        do {
-            blob = await this.canvasToBlob(canvas, format, quality);
+        while (attempts < maxAttempts && maxQuality - minQuality > 0.01) {
+            const currentQuality = (minQuality + maxQuality) / 2;
+            const blob = await this.canvasToBlob(
+                canvas,
+                format,
+                currentQuality,
+            );
 
-            if (blob.size <= targetSize || attempts >= maxAttempts) {
-                break;
+            if (blob.size <= targetSize) {
+                // Підходить - зберігаємо як найкращий варіант
+                bestBlob = blob;
+                bestQuality = currentQuality;
+                // Пробуємо знайти ще кращу якість
+                minQuality = currentQuality;
+            } else {
+                // Занадто великий - зменшуємо якість
+                maxQuality = currentQuality;
             }
 
-            // Зменшуємо якість
-            quality *= 0.9;
             attempts++;
-        } while (blob.size > targetSize);
+        }
 
-        return blob;
+        // Якщо не знайшли підходящий варіант, використовуємо мінімальну якість
+        if (!bestBlob) {
+            bestQuality = minQuality;
+            bestBlob = await this.canvasToBlob(canvas, format, minQuality);
+        }
+
+        return {
+            blob: bestBlob,
+            quality: Math.round(bestQuality * 100),
+        };
     }
 
     /**
@@ -303,7 +437,7 @@ export class ImageProcessor {
     }
 
     /**
-     * Завантаження всіх зображень як ZIP (опціонально)
+     * Завантаження всіх зображень
      */
     static downloadAll(processedImages: ProcessedImage[]): void {
         processedImages.forEach((img) => {
@@ -316,6 +450,26 @@ export class ImageProcessor {
      */
     static createPreviewURL(processedImage: ProcessedImage): string {
         return URL.createObjectURL(processedImage.blob);
+    }
+
+    /**
+     * Перевірка підтримки формату браузером
+     */
+    static async checkFormatSupport(format: string): Promise<boolean> {
+        return new Promise((resolve) => {
+            const canvas = document.createElement("canvas");
+            canvas.width = 1;
+            canvas.height = 1;
+
+            canvas.toBlob(
+                (blob) => {
+                    // Якщо blob створений і має розмір > 0, формат підтримується
+                    resolve(blob !== null && blob.size > 0);
+                },
+                `image/${format}`,
+                0.5,
+            );
+        });
     }
 }
 
