@@ -23,9 +23,6 @@ export interface ProcessedImage {
 }
 
 export class ImageProcessor {
-    /**
-     * Обробка одного зображення
-     */
     static async processImage(
         file: File,
         options: ImageProcessingOptions = {},
@@ -40,10 +37,8 @@ export class ImageProcessor {
             maxHeight,
         } = options;
 
-        // Завантаження зображення через createImageBitmap для кращої якості
         const imageBitmap = await createImageBitmap(file);
 
-        // Розрахунок розмірів
         const { width, height } = this.calculateDimensions(
             imageBitmap.width,
             imageBitmap.height,
@@ -52,15 +47,11 @@ export class ImageProcessor {
             maintainAspectRatio,
         );
 
-        // Створення OffscreenCanvas для максимальної продуктивності
         const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext("2d", {
-            alpha: true,
-        })!;
+        const ctx = canvas.getContext("2d", { alpha: true })!;
 
         ctx.clearRect(0, 0, width, height);
 
-        // Застосування закруглених кутів
         if (cornerRadius > 0) {
             const maxRadius = Math.min(width, height) / 2;
             const effectiveRadius = Math.min(cornerRadius, maxRadius);
@@ -68,14 +59,12 @@ export class ImageProcessor {
             ctx.clip();
         }
 
-        // Малювання з високою якістю
         ctx.drawImage(imageBitmap, 0, 0, width, height);
         imageBitmap.close();
 
         let blob: Blob;
         let appliedQuality: number;
 
-        // Обробка залежно від режиму
         if (maxSizeKB !== undefined) {
             const result = await this.compressToSize(
                 canvas,
@@ -89,11 +78,9 @@ export class ImageProcessor {
             blob = await this.convertToBlob(canvas, format, quality);
         }
 
-        const fileName = this.generateFileName(file.name, format);
-
         return {
             blob,
-            fileName,
+            fileName: this.generateFileName(file.name, format),
             originalName: file.name,
             originalSize: file.size,
             size: blob.size,
@@ -104,34 +91,22 @@ export class ImageProcessor {
         };
     }
 
-    /**
-     * Конвертація OffscreenCanvas в blob
-     */
     private static async convertToBlob(
         canvas: OffscreenCanvas,
         format: string,
         quality: number,
     ): Promise<Blob> {
-        // Нормалізуємо якість до 0-1
         let normalizedQuality = quality / 100;
 
-        // КРИТИЧНО: Для WebP обмежуємо максимум до 95%
-        // При 100% браузер використовує lossless режим який збільшує розмір
-        if (format === "webp" && normalizedQuality > 0.95) {
+        if (format === "webp" && normalizedQuality > 0.95)
             normalizedQuality = 0.95;
-        }
-
-        // Для JPEG також обмежуємо до 98%
-        if (format === "jpeg" && normalizedQuality > 0.98) {
+        if (format === "jpeg" && normalizedQuality > 0.98)
             normalizedQuality = 0.98;
-        }
 
-        // Для PNG використовуємо кастомну компресію
         if (format === "png") {
             return this.compressPNGOffscreen(canvas, normalizedQuality);
         }
 
-        // Для WebP та JPEG
         const blob = await canvas.convertToBlob({
             type: `image/${format}`,
             quality: normalizedQuality,
@@ -144,9 +119,6 @@ export class ImageProcessor {
         return blob;
     }
 
-    /**
-     * Компресія PNG для OffscreenCanvas
-     */
     private static async compressPNGOffscreen(
         canvas: OffscreenCanvas,
         quality: number,
@@ -177,16 +149,13 @@ export class ImageProcessor {
         return tempCanvas.convertToBlob({ type: "image/png" });
     }
 
-    /**
-     * Стиснення до заданого розміру з бінарним пошуком
-     */
     private static async compressToSize(
         canvas: OffscreenCanvas,
         format: string,
         targetSize: number,
     ): Promise<{ blob: Blob; quality: number }> {
         let minQuality = 10;
-        let maxQuality = format === "webp" ? 95 : 98; // Обмежуємо максимум
+        let maxQuality = format === "webp" ? 95 : 98;
         let bestBlob: Blob | null = null;
         let bestQuality = 0;
         const maxAttempts = 12;
@@ -194,7 +163,6 @@ export class ImageProcessor {
 
         while (attempts < maxAttempts && maxQuality - minQuality > 2) {
             const currentQuality = Math.round((minQuality + maxQuality) / 2);
-
             const blob = await this.convertToBlob(
                 canvas,
                 format,
@@ -221,23 +189,25 @@ export class ImageProcessor {
     }
 
     /**
-     * Обробка масиву зображень
+     * Обробка масиву зображень з підтримкою скасування через AbortSignal.
+     * Якщо signal.aborted стає true — цикл зупиняється після поточного файлу.
      */
     static async processImages(
         files: File[],
         options: ImageProcessingOptions = {},
         onProgress?: (processed: number, total: number) => void,
+        signal?: AbortSignal,
     ): Promise<ProcessedImage[]> {
         const results: ProcessedImage[] = [];
 
         for (let i = 0; i < files.length; i++) {
+            // Перевірка перед кожним файлом — якщо скасовано, виходимо
+            if (signal?.aborted) break;
+
             try {
                 const processed = await this.processImage(files[i], options);
                 results.push(processed);
-
-                if (onProgress) {
-                    onProgress(i + 1, files.length);
-                }
+                onProgress?.(i + 1, files.length);
             } catch (error) {
                 console.error(`Помилка обробки ${files[i].name}:`, error);
             }
@@ -256,9 +226,7 @@ export class ImageProcessor {
         let width = originalWidth;
         let height = originalHeight;
 
-        if (!maxWidth && !maxHeight) {
-            return { width, height };
-        }
+        if (!maxWidth && !maxHeight) return { width, height };
 
         if (maintainAspectRatio) {
             const ratio = originalWidth / originalHeight;
@@ -328,19 +296,6 @@ export class ImageProcessor {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
-
-    static downloadAll(processedImages: ProcessedImage[]): void {
-        processedImages.forEach((img) => this.downloadImage(img));
-    }
-
-    static createPreviewURL(processedImage: ProcessedImage): string {
-        return URL.createObjectURL(processedImage.blob);
-    }
-
-    static async checkFormatSupport(format: string): Promise<boolean> {
-        // Підтримуємо тільки WebP, PNG, JPEG
-        return ["webp", "png", "jpeg"].includes(format);
-    }
 }
 
 export const ImageUtils = {
@@ -358,12 +313,9 @@ export const ImageUtils = {
         return typeof OffscreenCanvas !== "undefined";
     },
 
-    async getImageInfo(file: File): Promise<{
-        width: number;
-        height: number;
-        size: number;
-        type: string;
-    }> {
+    async getImageInfo(
+        file: File,
+    ): Promise<{ width: number; height: number; size: number; type: string }> {
         const bitmap = await createImageBitmap(file);
         const info = {
             width: bitmap.width,

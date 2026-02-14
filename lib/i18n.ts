@@ -4,18 +4,15 @@ export const LOCALES = ["uk", "en", "ru"] as const;
 export type Locale = (typeof LOCALES)[number];
 
 export interface Translations {
-    // Header
     header: {
         home: string;
         imageTools: string;
         codeTools: string;
     };
-    // Footer
     footer: {
         madeWith: string;
         by: string;
     };
-    // Image Tools Page
     imageTools: {
         title: string;
         subtitle: string;
@@ -56,10 +53,13 @@ export interface Translations {
             tab: string;
             cornerRadius: string;
             description: string;
+            preview: string;
+            previewEmpty: string;
         };
         process: {
             button: string;
             processing: string;
+            cancel: string;
             image: string;
             images: string;
         };
@@ -69,10 +69,13 @@ export interface Translations {
             processed: string;
             downloadAll: string;
             willAppear: string;
+            download: string;
         };
         toast: {
             success: string;
             error: string;
+            cancelled: string;
+            cancelledAll: string;
             downloadSuccess: string;
             downloadError: string;
         };
@@ -131,11 +134,14 @@ export const translations: Record<Locale, Translations> = {
                 tab: "Стиль",
                 cornerRadius: "Закруглення кутів (px)",
                 description:
-                    "Для круглого зображення використайте велике значення (500+)",
+                    "Для круглого зображення використайте велике значення (500+) або Full",
+                preview: "Прев'ю",
+                previewEmpty: "Завантажте зображення для перегляду",
             },
             process: {
                 button: "Обробити",
                 processing: "Обробка...",
+                cancel: "Скасувати",
                 image: "зображення",
                 images: "зображень",
             },
@@ -145,10 +151,13 @@ export const translations: Record<Locale, Translations> = {
                 processed: "Оброблено",
                 downloadAll: "Завантажити всі",
                 willAppear: "Результати з'являться тут",
+                download: "Завантажити",
             },
             toast: {
                 success: "Зображення успішно оброблені!",
                 error: "Помилка обробки зображень",
+                cancelled: "Скасовано. Оброблено:",
+                cancelledAll: "Обробку скасовано",
                 downloadSuccess: "Файли завантажені успішно",
                 downloadError: "Помилка завантаження файлів",
             },
@@ -204,11 +213,15 @@ export const translations: Record<Locale, Translations> = {
             style: {
                 tab: "Style",
                 cornerRadius: "Corner radius (px)",
-                description: "Use large value (500+) for circular image",
+                description:
+                    "Use large value (500+) or Full for circular image",
+                preview: "Preview",
+                previewEmpty: "Upload an image to see preview",
             },
             process: {
                 button: "Process",
                 processing: "Processing...",
+                cancel: "Cancel",
                 image: "image",
                 images: "images",
             },
@@ -218,10 +231,13 @@ export const translations: Record<Locale, Translations> = {
                 processed: "Processed",
                 downloadAll: "Download all",
                 willAppear: "Results will appear here",
+                download: "Download",
             },
             toast: {
                 success: "Images processed successfully!",
                 error: "Image processing error",
+                cancelled: "Cancelled. Processed:",
+                cancelledAll: "Processing cancelled",
                 downloadSuccess: "Files downloaded successfully",
                 downloadError: "File download error",
             },
@@ -279,11 +295,14 @@ export const translations: Record<Locale, Translations> = {
                 tab: "Стиль",
                 cornerRadius: "Закругление углов (px)",
                 description:
-                    "Для круглого изображения используйте большое значение (500+)",
+                    "Для круглого изображения используйте большое значение (500+) или Full",
+                preview: "Предпросмотр",
+                previewEmpty: "Загрузите изображение для просмотра",
             },
             process: {
                 button: "Обработать",
                 processing: "Обработка...",
+                cancel: "Отменить",
                 image: "изображение",
                 images: "изображений",
             },
@@ -293,10 +312,13 @@ export const translations: Record<Locale, Translations> = {
                 processed: "Обработано",
                 downloadAll: "Скачать все",
                 willAppear: "Результаты появятся здесь",
+                download: "Скачать",
             },
             toast: {
                 success: "Изображения успешно обработаны!",
                 error: "Ошибка обработки изображений",
+                cancelled: "Отменено. Обработано:",
+                cancelledAll: "Обработка отменена",
                 downloadSuccess: "Файлы загружены успешно",
                 downloadError: "Ошибка загрузки файлов",
             },

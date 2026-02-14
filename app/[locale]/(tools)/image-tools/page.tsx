@@ -28,8 +28,9 @@ import {
     Settings,
     Trash2,
     Upload,
+    X,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { useAppProvider } from "../../_components/AppProvider";
 
@@ -38,6 +39,15 @@ interface FileWithSelection {
     id: string;
     selected: boolean;
 }
+
+const CORNER_RADIUS_PRESETS = [
+    { label: "0", value: 0 },
+    { label: "8", value: 8 },
+    { label: "12", value: 12 },
+    { label: "16", value: 16 },
+    { label: "24", value: 24 },
+    { label: "Full", value: 9999 },
+] as const;
 
 export default function ImageToolsPage() {
     const { locale } = useAppProvider();
@@ -58,6 +68,45 @@ export default function ImageToolsPage() {
         maxWidth: undefined,
         maxHeight: undefined,
     });
+
+    const abortControllerRef = useRef<AbortController | null>(null);
+
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const previewImgRef = useRef<HTMLImageElement | null>(null);
+    const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+    const [selectedProcessedImage, setSelectedProcessedImage] =
+        useState<ProcessedImage | null>(null);
+
+    useEffect(() => {
+        const anyOpen = isPreviewModalOpen || selectedProcessedImage !== null;
+        if (!anyOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape") return;
+            setIsPreviewModalOpen(false);
+            setSelectedProcessedImage(null);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [isPreviewModalOpen, selectedProcessedImage]);
+    const firstFileId = files[0]?.id;
+    useEffect(() => {
+        const firstFile = files[0]?.file ?? null;
+        if (!firstFile) {
+            setPreviewUrl(null);
+            return;
+        }
+        const url = URL.createObjectURL(firstFile);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [firstFileId]);
+
+    const getScaledRadius = (): string => {
+        if (activeRadius === 9999) return "9999px";
+        const img = previewImgRef.current;
+        if (!img || !img.naturalWidth) return `${activeRadius}px`;
+        const scale = img.clientWidth / img.naturalWidth;
+        return `${Math.round(activeRadius * scale)}px`;
+    };
 
     const resetResults = () => {
         setProcessedImages([]);
@@ -108,6 +157,9 @@ export default function ImageToolsPage() {
             .map((f) => f.file);
         if (selectedFiles.length === 0) return;
 
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
         setIsProcessing(true);
         setProgress(0);
 
@@ -123,14 +175,32 @@ export default function ImageToolsPage() {
                 selectedFiles,
                 processingOptions,
                 (current, total) => setProgress((current / total) * 100),
+                controller.signal,
             );
-            setProcessedImages(processed);
-            toast.success(t.imageTools.toast.success);
+
+            if (controller.signal.aborted) {
+                if (processed.length > 0) {
+                    setProcessedImages(processed);
+                    toast.info(
+                        `${t.imageTools.toast.cancelled} ${processed.length}/${selectedFiles.length}`,
+                    );
+                } else {
+                    toast.info(t.imageTools.toast.cancelledAll);
+                }
+            } else {
+                setProcessedImages(processed);
+                toast.success(t.imageTools.toast.success);
+            }
         } catch {
             toast.error(t.imageTools.toast.error);
         } finally {
             setIsProcessing(false);
+            abortControllerRef.current = null;
         }
+    };
+
+    const cancelProcessing = () => {
+        abortControllerRef.current?.abort();
     };
 
     const downloadAll = () => {
@@ -163,6 +233,7 @@ export default function ImageToolsPage() {
     };
 
     const selectedCount = files.filter((f) => f.selected).length;
+    const activeRadius = options.cornerRadius ?? 0;
 
     return (
         <main className="flex-1 w-full max-w-5xl flex-col gap-8 p-6">
@@ -174,7 +245,6 @@ export default function ImageToolsPage() {
             </div>
 
             <div className="grid gap-8 lg:grid-cols-2">
-                {/* Settings */}
                 <div className="flex flex-col gap-6">
                     <Card>
                         <CardHeader>
@@ -241,9 +311,9 @@ export default function ImageToolsPage() {
                                         </Label>
                                         <RadioGroup
                                             value={qualityMode}
-                                            onValueChange={(value) =>
+                                            onValueChange={(v) =>
                                                 setQualityMode(
-                                                    value as "manual" | "auto",
+                                                    v as "manual" | "auto",
                                                 )
                                             }
                                         >
@@ -380,16 +450,50 @@ export default function ImageToolsPage() {
                                     value="style"
                                     className="space-y-4 mt-4"
                                 >
-                                    <div className="space-y-2">
+                                    <div className="space-y-3">
                                         <Label>
                                             {t.imageTools.style.cornerRadius}
                                         </Label>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            {CORNER_RADIUS_PRESETS.map(
+                                                (preset) => (
+                                                    <Button
+                                                        key={preset.value}
+                                                        variant={
+                                                            activeRadius ===
+                                                            preset.value
+                                                                ? "default"
+                                                                : "outline"
+                                                        }
+                                                        size="sm"
+                                                        onClick={() =>
+                                                            setOptions({
+                                                                ...options,
+                                                                cornerRadius:
+                                                                    preset.value,
+                                                            })
+                                                        }
+                                                    >
+                                                        {preset.label}
+                                                    </Button>
+                                                ),
+                                            )}
+                                        </div>
+
                                         <div className="flex gap-2">
                                             <Input
                                                 type="number"
                                                 min="0"
                                                 value={
-                                                    options.cornerRadius || 0
+                                                    activeRadius === 9999
+                                                        ? ""
+                                                        : activeRadius
+                                                }
+                                                placeholder={
+                                                    activeRadius === 9999
+                                                        ? "Full"
+                                                        : "0"
                                                 }
                                                 onChange={(e) =>
                                                     setOptions({
@@ -405,8 +509,10 @@ export default function ImageToolsPage() {
                                             <div className="flex-1">
                                                 <Slider
                                                     value={[
-                                                        options.cornerRadius ||
-                                                            0,
+                                                        Math.min(
+                                                            activeRadius,
+                                                            500,
+                                                        ),
                                                     ]}
                                                     onValueChange={([value]) =>
                                                         setOptions({
@@ -420,36 +526,81 @@ export default function ImageToolsPage() {
                                                 />
                                             </div>
                                         </div>
+
                                         <p className="text-xs text-muted-foreground">
                                             {t.imageTools.style.description}
                                         </p>
+
+                                        {previewUrl ? (
+                                            <div className="flex flex-col gap-2 pt-1">
+                                                <p className="text-xs text-muted-foreground">
+                                                    {t.imageTools.style.preview}
+                                                </p>
+                                                {/*eslint-disable-next-line*/}
+                                                <img
+                                                    ref={previewImgRef}
+                                                    src={previewUrl}
+                                                    alt="preview"
+                                                    className="w-full cursor-zoom-in transition-opacity hover:opacity-90"
+                                                    style={{
+                                                        borderRadius:
+                                                            getScaledRadius(),
+                                                    }}
+                                                    onClick={() =>
+                                                        setIsPreviewModalOpen(
+                                                            true,
+                                                        )
+                                                    }
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center justify-center h-20 rounded-lg border border-dashed text-xs text-muted-foreground">
+                                                {
+                                                    t.imageTools.style
+                                                        .previewEmpty
+                                                }
+                                            </div>
+                                        )}
                                     </div>
                                 </TabsContent>
                             </Tabs>
                         </CardContent>
                     </Card>
 
-                    <Button
-                        onClick={processImages}
-                        disabled={selectedCount === 0 || isProcessing}
-                        size="lg"
-                        className="w-full"
-                    >
-                        {isProcessing
-                            ? `${t.imageTools.process.processing} ${Math.round(progress)}%`
-                            : `${t.imageTools.process.button} ${selectedCount} ${
-                                  selectedCount === 1
-                                      ? t.imageTools.process.image
-                                      : t.imageTools.process.images
-                              }`}
-                    </Button>
+                    <div className="flex gap-2">
+                        <Button
+                            onClick={processImages}
+                            disabled={selectedCount === 0 || isProcessing}
+                            size="lg"
+                            className="flex-1"
+                        >
+                            {isProcessing
+                                ? `${t.imageTools.process.processing} ${Math.round(progress)}%`
+                                : `${t.imageTools.process.button} ${selectedCount} ${
+                                      selectedCount === 1
+                                          ? t.imageTools.process.image
+                                          : t.imageTools.process.images
+                                  }`}
+                        </Button>
+
+                        {isProcessing && (
+                            <Button
+                                onClick={cancelProcessing}
+                                size="lg"
+                                variant="outline"
+                                className="shrink-0"
+                            >
+                                <X className="h-4 w-4 mr-1" />
+                                {t.imageTools.process.cancel}
+                            </Button>
+                        )}
+                    </div>
 
                     {isProcessing && (
                         <Progress value={progress} className="w-full" />
                     )}
                 </div>
 
-                {/* Upload & Results */}
                 <div className="flex flex-col gap-6">
                     <Card>
                         <CardHeader>
@@ -554,6 +705,9 @@ export default function ImageToolsPage() {
                                                             file.id,
                                                         )
                                                     }
+                                                    onClick={(e) =>
+                                                        e.stopPropagation()
+                                                    }
                                                 />
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-xs truncate">
@@ -609,7 +763,12 @@ export default function ImageToolsPage() {
                                         return (
                                             <div
                                                 key={idx}
-                                                className="border rounded-lg p-3 flex items-center gap-3 hover:bg-accent transition-colors"
+                                                className="border rounded-lg p-3 flex items-center gap-3 hover:bg-accent transition-colors cursor-pointer"
+                                                onClick={() =>
+                                                    setSelectedProcessedImage(
+                                                        img,
+                                                    )
+                                                }
                                             >
                                                 <div className="flex-1 min-w-0">
                                                     <p className="font-medium text-sm truncate">
@@ -672,11 +831,12 @@ export default function ImageToolsPage() {
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"
-                                                    onClick={() =>
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
                                                         ImageProcessor.downloadImage(
                                                             img,
-                                                        )
-                                                    }
+                                                        );
+                                                    }}
                                                 >
                                                     <Download className="h-4 w-4" />
                                                 </Button>
@@ -696,6 +856,146 @@ export default function ImageToolsPage() {
                     </Card>
                 </div>
             </div>
+            {isPreviewModalOpen && previewUrl && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+                    onClick={() => setIsPreviewModalOpen(false)}
+                >
+                    <div
+                        className="relative"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            className="absolute -top-3 -right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-white dark:bg-zinc-800 text-black dark:text-white shadow-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                            onClick={() => setIsPreviewModalOpen(false)}
+                            aria-label="Close"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                        {/*eslint-disable-next-line*/}
+                        <img
+                            src={previewUrl}
+                            alt="preview full"
+                            className="block max-w-[90vw] max-h-[90vh] object-contain"
+                            style={{
+                                borderRadius:
+                                    activeRadius === 9999
+                                        ? "9999px"
+                                        : (() => {
+                                              const img = previewImgRef.current;
+                                              if (!img || !img.naturalWidth)
+                                                  return `${activeRadius}px`;
+                                              // В модалці img обмежений 90vw/90vh — беремо менший з двох варіантів масштабу
+                                              const scaleW =
+                                                  (window.innerWidth * 0.9) /
+                                                  img.naturalWidth;
+                                              const scaleH =
+                                                  (window.innerHeight * 0.9) /
+                                                  img.naturalHeight;
+                                              const scale = Math.min(
+                                                  scaleW,
+                                                  scaleH,
+                                                  1,
+                                              );
+                                              return `${Math.round(activeRadius * scale)}px`;
+                                          })(),
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
+            {selectedProcessedImage &&
+                (() => {
+                    const objectUrl = URL.createObjectURL(
+                        selectedProcessedImage.blob,
+                    );
+                    const isSmaller =
+                        selectedProcessedImage.size <
+                        selectedProcessedImage.originalSize;
+                    const percentChange = Math.abs(
+                        Number(
+                            (
+                                ((selectedProcessedImage.size -
+                                    selectedProcessedImage.originalSize) /
+                                    selectedProcessedImage.originalSize) *
+                                100
+                            ).toFixed(1),
+                        ),
+                    );
+                    return (
+                        <div
+                            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+                            onClick={() => setSelectedProcessedImage(null)}
+                        >
+                            <div
+                                className="relative flex flex-col items-center gap-3"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <button
+                                    className="absolute -top-3 -right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-white dark:bg-zinc-800 text-black dark:text-white shadow-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                                    onClick={() =>
+                                        setSelectedProcessedImage(null)
+                                    }
+                                    aria-label="Close"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                                {/*eslint-disable-next-line*/}
+                                <img
+                                    src={objectUrl}
+                                    alt={selectedProcessedImage.fileName}
+                                    className="block max-w-[90vw] max-h-[82vh] object-contain rounded-lg"
+                                    onLoad={() =>
+                                        URL.revokeObjectURL(objectUrl)
+                                    }
+                                />
+
+                                <div className="flex flex-wrap justify-center items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-zinc-900 shadow-lg">
+                                    <span className="text-xs font-medium text-foreground truncate max-w-45">
+                                        {selectedProcessedImage.fileName}
+                                    </span>
+                                    <div className="w-px h-3 bg-border" />
+                                    <span className="text-xs font-mono text-muted-foreground">
+                                        {selectedProcessedImage.format.toUpperCase()}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                        {selectedProcessedImage.width}×
+                                        {selectedProcessedImage.height}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                        {formatFileSize(
+                                            selectedProcessedImage.originalSize,
+                                        )}{" "}
+                                        →{" "}
+                                        {formatFileSize(
+                                            selectedProcessedImage.size,
+                                        )}
+                                    </span>
+                                    <span
+                                        className={`text-xs font-semibold ${isSmaller ? "text-green-500" : "text-red-500"}`}
+                                    >
+                                        {isSmaller ? "−" : "+"}
+                                        {percentChange}%
+                                    </span>
+                                    <div className="w-px h-3 bg-border" />
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-6 px-2 text-xs"
+                                        onClick={() =>
+                                            ImageProcessor.downloadImage(
+                                                selectedProcessedImage,
+                                            )
+                                        }
+                                    >
+                                        <Download className="h-3 w-3 mr-1" />
+                                        {t.imageTools.results.download}
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
         </main>
     );
 }
