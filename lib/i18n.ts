@@ -1,6 +1,7 @@
 // lib/i18n.ts
 
-export type Locale = "uk" | "en" | "ru";
+export const LOCALES = ["uk", "en", "ru"] as const;
+export type Locale = (typeof LOCALES)[number];
 
 export interface Translations {
     // Header

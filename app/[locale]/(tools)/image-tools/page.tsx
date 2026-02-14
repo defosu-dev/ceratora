@@ -1,7 +1,5 @@
-// app/page.tsx
 "use client";
 
-import { useAppProvider } from "@/app/_components/AppProvider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,7 +31,7 @@ import {
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
+import { useAppProvider } from "../../_components/AppProvider";
 
 interface FileWithSelection {
     file: File;
@@ -41,13 +39,10 @@ interface FileWithSelection {
     selected: boolean;
 }
 
-export default function Home() {
-    const { locale, isHydrated } = useAppProvider();
+export default function ImageToolsPage() {
+    const { locale } = useAppProvider();
     const t = useTranslation(locale);
 
-    // ---------------------------------------------------------------------------
-    // Image processing state
-    // ---------------------------------------------------------------------------
     const [files, setFiles] = useState<FileWithSelection[]>([]);
     const [processedImages, setProcessedImages] = useState<ProcessedImage[]>(
         [],
@@ -55,7 +50,6 @@ export default function Home() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [progress, setProgress] = useState(0);
     const [qualityMode, setQualityMode] = useState<"manual" | "auto">("manual");
-
     const [options, setOptions] = useState<ImageProcessingOptions>({
         format: "webp",
         quality: 80,
@@ -65,40 +59,39 @@ export default function Home() {
         maxHeight: undefined,
     });
 
+    const resetResults = () => {
+        setProcessedImages([]);
+        setProgress(0);
+    };
+
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files) {
-            const newFiles = Array.from(e.target.files).map((file) => ({
-                file,
-                id: crypto.randomUUID(),
-                selected: true,
-            }));
-            setFiles(newFiles);
-            setProcessedImages([]);
-            setProgress(0);
-        }
+        if (!e.target.files) return;
+        const newFiles = Array.from(e.target.files).map((file) => ({
+            file,
+            id: crypto.randomUUID(),
+            selected: true,
+        }));
+        setFiles(newFiles);
+        resetResults();
     };
 
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
-        if (e.dataTransfer.files) {
-            const newFiles = Array.from(e.dataTransfer.files).map((file) => ({
-                file,
-                id: crypto.randomUUID(),
-                selected: true,
-            }));
-            setFiles(newFiles);
-            setProcessedImages([]);
-            setProgress(0);
-        }
+        if (!e.dataTransfer.files) return;
+        const newFiles = Array.from(e.dataTransfer.files).map((file) => ({
+            file,
+            id: crypto.randomUUID(),
+            selected: true,
+        }));
+        setFiles(newFiles);
+        resetResults();
     }, []);
 
-    const handleDragOver = (e: React.DragEvent) => {
-        e.preventDefault();
-    };
+    const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
     const toggleFileSelection = (id: string) => {
-        setFiles(
-            files.map((f) =>
+        setFiles((prev) =>
+            prev.map((f) =>
                 f.id === id ? { ...f, selected: !f.selected } : f,
             ),
         );
@@ -106,7 +99,7 @@ export default function Home() {
 
     const toggleAllSelection = () => {
         const allSelected = files.every((f) => f.selected);
-        setFiles(files.map((f) => ({ ...f, selected: !allSelected })));
+        setFiles((prev) => prev.map((f) => ({ ...f, selected: !allSelected })));
     };
 
     const processImages = async () => {
@@ -129,9 +122,7 @@ export default function Home() {
             const processed = await ImageProcessor.processImages(
                 selectedFiles,
                 processingOptions,
-                (current, total) => {
-                    setProgress((current / total) * 100);
-                },
+                (current, total) => setProgress((current / total) * 100),
             );
             setProcessedImages(processed);
             toast.success(t.imageTools.toast.success);
@@ -144,9 +135,7 @@ export default function Home() {
 
     const downloadAll = () => {
         try {
-            processedImages.forEach((img) => {
-                ImageProcessor.downloadImage(img);
-            });
+            processedImages.forEach((img) => ImageProcessor.downloadImage(img));
             toast.success(t.imageTools.toast.downloadSuccess);
         } catch {
             toast.error(t.imageTools.toast.downloadError);
@@ -155,14 +144,12 @@ export default function Home() {
 
     const clearAll = () => {
         setFiles([]);
-        setProcessedImages([]);
-        setProgress(0);
+        resetResults();
     };
 
     const clearSelected = () => {
-        setFiles(files.filter((f) => !f.selected));
-        setProcessedImages([]);
-        setProgress(0);
+        setFiles((prev) => prev.filter((f) => !f.selected));
+        resetResults();
     };
 
     const formatFileSize = (bytes: number) => {
@@ -177,17 +164,8 @@ export default function Home() {
 
     const selectedCount = files.filter((f) => f.selected).length;
 
-    // ---------------------------------------------------------------------------
-    // RENDER
-    // ---------------------------------------------------------------------------
-
-    if (!isHydrated) {
-        return null;
-    }
-
     return (
         <main className="flex-1 w-full max-w-5xl flex-col gap-8 p-6">
-            {/* Page Title */}
             <div className="flex flex-col gap-2 mb-8">
                 <h1 className="text-3xl font-bold tracking-tight">
                     {t.imageTools.title}
@@ -198,7 +176,6 @@ export default function Home() {
             <div className="grid gap-8 lg:grid-cols-2">
                 {/* Settings */}
                 <div className="flex flex-col gap-6">
-                    {/* Settings */}
                     <Card>
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -379,7 +356,6 @@ export default function Home() {
                                             }
                                         />
                                     </div>
-
                                     <div className="space-y-2">
                                         <Label>
                                             {t.imageTools.size.maxHeight}
@@ -453,7 +429,6 @@ export default function Home() {
                         </CardContent>
                     </Card>
 
-                    {/* Process Button */}
                     <Button
                         onClick={processImages}
                         disabled={selectedCount === 0 || isProcessing}
@@ -476,7 +451,6 @@ export default function Home() {
 
                 {/* Upload & Results */}
                 <div className="flex flex-col gap-6">
-                    {/* Upload Area */}
                     <Card>
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
@@ -599,7 +573,6 @@ export default function Home() {
                         </CardContent>
                     </Card>
 
-                    {/* Results */}
                     <Card>
                         <CardHeader>
                             <div className="flex items-center justify-between">

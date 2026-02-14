@@ -1,7 +1,6 @@
-// app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
+import "../globals.css";
 import { AppProvider } from "./_components/AppProvider";
 import Header from "./_components/Header";
 import Footer from "./_components/Footer";
@@ -23,33 +22,25 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
     children,
+    params,
 }: Readonly<{
     children: React.ReactNode;
+    params: { locale: string };
 }>) {
     return (
-        <html suppressHydrationWarning>
+        <html lang={params.locale} suppressHydrationWarning>
             <head>
                 <script
                     dangerouslySetInnerHTML={{
                         __html: `
                             (function() {
                                 try {
-                                    // Встановлюємо тему
                                     const theme = localStorage.getItem('theme') ||
                                         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-
                                     if (theme === 'dark') {
                                         document.documentElement.classList.add('dark');
                                     }
-
-                                    // Встановлюємо мову
-                                    const locale = localStorage.getItem('locale') ||
-                                        navigator.language.split('-')[0] || 'en';
-
-                                    document.documentElement.setAttribute('lang', locale);
-                                } catch (e) {
-                                    document.documentElement.setAttribute('lang', 'en');
-                                }
+                                } catch (e) {}
                             })();
                         `,
                     }}
