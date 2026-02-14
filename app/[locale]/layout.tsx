@@ -20,16 +20,18 @@ export const metadata: Metadata = {
     description: "Convert, compress and edit images directly in your browser",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
     children,
     params,
 }: Readonly<{
     children: React.ReactNode;
-    params: { locale: string };
+    params: Promise<{ locale: string }>;
 }>) {
+    const { locale } = await params;
     return (
-        <html lang={params.locale} suppressHydrationWarning>
+        <html lang={locale} suppressHydrationWarning>
             <head>
+                {/* Лише тема — встановлюємо до рендеру, щоб уникнути FOUC */}
                 <script
                     dangerouslySetInnerHTML={{
                         __html: `
