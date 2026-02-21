@@ -10,6 +10,12 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -23,6 +29,8 @@ import {
     ProcessedImage,
 } from "@/lib/imageProcessor";
 import {
+    Archive,
+    ChevronDown,
     Download,
     Image as ImageIcon,
     Settings,
@@ -49,6 +57,8 @@ const CORNER_RADIUS_PRESETS = [
     { label: "Full", value: 9999 },
 ] as const;
 
+const OUTPUT_FORMATS = ["webp", "avif", "png", "jpeg"] as const;
+
 export default function ImageToolsPage() {
     const { locale } = useAppProvider();
     const t = useTranslation(locale);
@@ -70,12 +80,14 @@ export default function ImageToolsPage() {
     });
 
     const abortControllerRef = useRef<AbortController | null>(null);
-
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const previewImgRef = useRef<HTMLImageElement | null>(null);
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
     const [selectedProcessedImage, setSelectedProcessedImage] =
         useState<ProcessedImage | null>(null);
+    const [processedObjectUrl, setProcessedObjectUrl] = useState<string | null>(
+        null,
+    );
 
     useEffect(() => {
         const anyOpen = isPreviewModalOpen || selectedProcessedImage !== null;
@@ -88,6 +100,20 @@ export default function ImageToolsPage() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [isPreviewModalOpen, selectedProcessedImage]);
+
+    useEffect(() => {
+        if (!selectedProcessedImage) {
+            if (processedObjectUrl) {
+                URL.revokeObjectURL(processedObjectUrl);
+                setProcessedObjectUrl(null);
+            }
+            return;
+        }
+        const url = URL.createObjectURL(selectedProcessedImage.blob);
+        setProcessedObjectUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [selectedProcessedImage]);
+
     const firstFileId = files[0]?.id;
     useEffect(() => {
         const firstFile = files[0]?.file ?? null;
@@ -105,6 +131,16 @@ export default function ImageToolsPage() {
         const img = previewImgRef.current;
         if (!img || !img.naturalWidth) return `${activeRadius}px`;
         const scale = img.clientWidth / img.naturalWidth;
+        return `${Math.round(activeRadius * scale)}px`;
+    };
+
+    const getModalRadius = (): string => {
+        if (activeRadius === 9999) return "9999px";
+        const img = previewImgRef.current;
+        if (!img || !img.naturalWidth) return `${activeRadius}px`;
+        const scaleW = (window.innerWidth * 0.9) / img.naturalWidth;
+        const scaleH = (window.innerHeight * 0.9) / img.naturalHeight;
+        const scale = Math.min(scaleW, scaleH, 1);
         return `${Math.round(activeRadius * scale)}px`;
     };
 
@@ -203,9 +239,18 @@ export default function ImageToolsPage() {
         abortControllerRef.current?.abort();
     };
 
-    const downloadAll = () => {
+    const handleDownloadAll = () => {
         try {
             processedImages.forEach((img) => ImageProcessor.downloadImage(img));
+            toast.success(t.imageTools.toast.downloadSuccess);
+        } catch {
+            toast.error(t.imageTools.toast.downloadError);
+        }
+    };
+
+    const handleSaveAsZip = async () => {
+        try {
+            await ImageProcessor.downloadAsZip(processedImages);
             toast.success(t.imageTools.toast.downloadSuccess);
         } catch {
             toast.error(t.imageTools.toast.downloadError);
@@ -280,10 +325,8 @@ export default function ImageToolsPage() {
                                         <Label>
                                             {t.imageTools.format.outputFormat}
                                         </Label>
-                                        <div className="grid grid-cols-3 gap-2">
-                                            {(
-                                                ["webp", "png", "jpeg"] as const
-                                            ).map((fmt) => (
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {OUTPUT_FORMATS.map((fmt) => (
                                                 <Button
                                                     key={fmt}
                                                     variant={
@@ -348,10 +391,13 @@ export default function ImageToolsPage() {
                                         <div className="space-y-2">
                                             <Label>
                                                 {t.imageTools.format.quality} (
-                                                {options.quality}%)
+                                                {options.format === "png"
+                                                    ? "lossless"
+                                                    : `${options.quality}%`}
+                                                )
                                             </Label>
                                             <Slider
-                                                value={[options.quality || 80]}
+                                                value={[options.quality ?? 80]}
                                                 onValueChange={([value]) =>
                                                     setOptions({
                                                         ...options,
@@ -361,12 +407,15 @@ export default function ImageToolsPage() {
                                                 min={1}
                                                 max={100}
                                                 step={1}
+                                                disabled={
+                                                    options.format === "png"
+                                                }
                                             />
                                             <p className="text-xs text-muted-foreground">
-                                                {
-                                                    t.imageTools.format
-                                                        .recommended
-                                                }
+                                                {options.format === "png"
+                                                    ? "PNG is lossless — quality setting has no effect"
+                                                    : t.imageTools.format
+                                                          .recommended}
                                             </p>
                                         </div>
                                     ) : (
@@ -380,7 +429,7 @@ export default function ImageToolsPage() {
                                                     t.imageTools.format
                                                         .placeholder
                                                 }
-                                                value={options.maxSizeKB || ""}
+                                                value={options.maxSizeKB ?? ""}
                                                 onChange={(e) =>
                                                     setOptions({
                                                         ...options,
@@ -415,7 +464,7 @@ export default function ImageToolsPage() {
                                         <Input
                                             type="number"
                                             placeholder={t.imageTools.size.auto}
-                                            value={options.maxWidth || ""}
+                                            value={options.maxWidth ?? ""}
                                             onChange={(e) =>
                                                 setOptions({
                                                     ...options,
@@ -433,7 +482,7 @@ export default function ImageToolsPage() {
                                         <Input
                                             type="number"
                                             placeholder={t.imageTools.size.auto}
-                                            value={options.maxHeight || ""}
+                                            value={options.maxHeight ?? ""}
                                             onChange={(e) =>
                                                 setOptions({
                                                     ...options,
@@ -740,11 +789,41 @@ export default function ImageToolsPage() {
                                             : t.imageTools.results.description}
                                     </CardDescription>
                                 </div>
+
                                 {processedImages.length > 0 && (
-                                    <Button onClick={downloadAll} size="sm">
-                                        <Download className="h-4 w-4 mr-2" />
-                                        {t.imageTools.results.downloadAll}
-                                    </Button>
+                                    <div className="flex items-center rounded-md shadow-xs">
+                                        <Button
+                                            size="sm"
+                                            className="rounded-r-none border-r-0"
+                                            onClick={handleDownloadAll}
+                                        >
+                                            <Download className="h-4 w-4 mr-2" />
+                                            {t.imageTools.results.downloadAll}
+                                        </Button>
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button
+                                                    size="sm"
+                                                    className="rounded-l-none px-2"
+                                                >
+                                                    <ChevronDown className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem
+                                                    onClick={() =>
+                                                        void handleSaveAsZip()
+                                                    }
+                                                >
+                                                    <Archive className="h-4 w-4 mr-2" />
+                                                    {
+                                                        t.imageTools.results
+                                                            .saveAsZip
+                                                    }
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
                                 )}
                             </div>
                         </CardHeader>
@@ -818,14 +897,19 @@ export default function ImageToolsPage() {
                                                             {img.width}×
                                                             {img.height}
                                                         </Badge>
-                                                        <Badge
-                                                            variant="outline"
-                                                            className="text-xs"
-                                                        >
-                                                            Q:{" "}
-                                                            {img.appliedQuality}
-                                                            %
-                                                        </Badge>
+                                                        {img.format !==
+                                                            "png" && (
+                                                            <Badge
+                                                                variant="outline"
+                                                                className="text-xs"
+                                                            >
+                                                                Q:{" "}
+                                                                {
+                                                                    img.appliedQuality
+                                                                }
+                                                                %
+                                                            </Badge>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <Button
@@ -856,6 +940,7 @@ export default function ImageToolsPage() {
                     </Card>
                 </div>
             </div>
+
             {isPreviewModalOpen && previewUrl && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
@@ -877,125 +962,94 @@ export default function ImageToolsPage() {
                             src={previewUrl}
                             alt="preview full"
                             className="block max-w-[90vw] max-h-[90vh] object-contain"
-                            style={{
-                                borderRadius:
-                                    activeRadius === 9999
-                                        ? "9999px"
-                                        : (() => {
-                                              const img = previewImgRef.current;
-                                              if (!img || !img.naturalWidth)
-                                                  return `${activeRadius}px`;
-                                              // В модалці img обмежений 90vw/90vh — беремо менший з двох варіантів масштабу
-                                              const scaleW =
-                                                  (window.innerWidth * 0.9) /
-                                                  img.naturalWidth;
-                                              const scaleH =
-                                                  (window.innerHeight * 0.9) /
-                                                  img.naturalHeight;
-                                              const scale = Math.min(
-                                                  scaleW,
-                                                  scaleH,
-                                                  1,
-                                              );
-                                              return `${Math.round(activeRadius * scale)}px`;
-                                          })(),
-                            }}
+                            style={{ borderRadius: getModalRadius() }}
                         />
                     </div>
                 </div>
             )}
-            {selectedProcessedImage &&
-                (() => {
-                    const objectUrl = URL.createObjectURL(
-                        selectedProcessedImage.blob,
-                    );
-                    const isSmaller =
-                        selectedProcessedImage.size <
-                        selectedProcessedImage.originalSize;
-                    const percentChange = Math.abs(
-                        Number(
-                            (
-                                ((selectedProcessedImage.size -
-                                    selectedProcessedImage.originalSize) /
-                                    selectedProcessedImage.originalSize) *
-                                100
-                            ).toFixed(1),
-                        ),
-                    );
-                    return (
-                        <div
-                            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
-                            onClick={() => setSelectedProcessedImage(null)}
-                        >
-                            <div
-                                className="relative flex flex-col items-center gap-3"
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                <button
-                                    className="absolute -top-3 -right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-white dark:bg-zinc-800 text-black dark:text-white shadow-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
-                                    onClick={() =>
-                                        setSelectedProcessedImage(null)
-                                    }
-                                    aria-label="Close"
-                                >
-                                    <X className="h-4 w-4" />
-                                </button>
-                                {/*eslint-disable-next-line*/}
-                                <img
-                                    src={objectUrl}
-                                    alt={selectedProcessedImage.fileName}
-                                    className="block max-w-[90vw] max-h-[82vh] object-contain rounded-lg"
-                                    onLoad={() =>
-                                        URL.revokeObjectURL(objectUrl)
-                                    }
-                                />
 
-                                <div className="flex flex-wrap justify-center items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-zinc-900 shadow-lg">
-                                    <span className="text-xs font-medium text-foreground truncate max-w-45">
-                                        {selectedProcessedImage.fileName}
-                                    </span>
-                                    <div className="w-px h-3 bg-border" />
-                                    <span className="text-xs font-mono text-muted-foreground">
-                                        {selectedProcessedImage.format.toUpperCase()}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                        {selectedProcessedImage.width}×
-                                        {selectedProcessedImage.height}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                        {formatFileSize(
-                                            selectedProcessedImage.originalSize,
-                                        )}{" "}
-                                        →{" "}
-                                        {formatFileSize(
-                                            selectedProcessedImage.size,
-                                        )}
-                                    </span>
-                                    <span
-                                        className={`text-xs font-semibold ${isSmaller ? "text-green-500" : "text-red-500"}`}
-                                    >
-                                        {isSmaller ? "−" : "+"}
-                                        {percentChange}%
-                                    </span>
-                                    <div className="w-px h-3 bg-border" />
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-6 px-2 text-xs"
-                                        onClick={() =>
-                                            ImageProcessor.downloadImage(
-                                                selectedProcessedImage,
-                                            )
-                                        }
-                                    >
-                                        <Download className="h-3 w-3 mr-1" />
-                                        {t.imageTools.results.download}
-                                    </Button>
-                                </div>
-                            </div>
+            {selectedProcessedImage && processedObjectUrl && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+                    onClick={() => setSelectedProcessedImage(null)}
+                >
+                    <div
+                        className="relative flex flex-col items-center gap-3"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            className="absolute -top-3 -right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-white dark:bg-zinc-800 text-black dark:text-white shadow-lg hover:bg-gray-100 dark:hover:bg-zinc-700 transition-colors"
+                            onClick={() => setSelectedProcessedImage(null)}
+                            aria-label="Close"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                        {/*eslint-disable-next-line*/}
+                        <img
+                            src={processedObjectUrl}
+                            alt={selectedProcessedImage.fileName}
+                            className="block max-w-[90vw] max-h-[82vh] object-contain"
+                        />
+                        <div className="flex flex-wrap justify-center items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-zinc-900 shadow-lg">
+                            <span className="text-xs font-medium text-foreground truncate max-w-45">
+                                {selectedProcessedImage.fileName}
+                            </span>
+                            <div className="w-px h-3 bg-border" />
+                            <span className="text-xs font-mono text-muted-foreground">
+                                {selectedProcessedImage.format.toUpperCase()}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                                {selectedProcessedImage.width}×
+                                {selectedProcessedImage.height}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                                {formatFileSize(
+                                    selectedProcessedImage.originalSize,
+                                )}{" "}
+                                → {formatFileSize(selectedProcessedImage.size)}
+                            </span>
+                            <span
+                                className={`text-xs font-semibold ${
+                                    selectedProcessedImage.size <
+                                    selectedProcessedImage.originalSize
+                                        ? "text-green-500"
+                                        : "text-red-500"
+                                }`}
+                            >
+                                {selectedProcessedImage.size <
+                                selectedProcessedImage.originalSize
+                                    ? "−"
+                                    : "+"}
+                                {Math.abs(
+                                    Number(
+                                        (
+                                            ((selectedProcessedImage.size -
+                                                selectedProcessedImage.originalSize) /
+                                                selectedProcessedImage.originalSize) *
+                                            100
+                                        ).toFixed(1),
+                                    ),
+                                )}
+                                %
+                            </span>
+                            <div className="w-px h-3 bg-border" />
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                onClick={() =>
+                                    ImageProcessor.downloadImage(
+                                        selectedProcessedImage,
+                                    )
+                                }
+                            >
+                                <Download className="h-3 w-3 mr-1" />
+                                {t.imageTools.results.download}
+                            </Button>
                         </div>
-                    );
-                })()}
+                    </div>
+                </div>
+            )}
         </main>
     );
 }

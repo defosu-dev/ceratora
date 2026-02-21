@@ -68,6 +68,7 @@ export interface Translations {
             description: string;
             processed: string;
             downloadAll: string;
+            saveAsZip: string;
             willAppear: string;
             download: string;
         };
@@ -150,6 +151,7 @@ export const translations: Record<Locale, Translations> = {
                 description: "Зображення з'являться тут після обробки",
                 processed: "Оброблено",
                 downloadAll: "Завантажити всі",
+                saveAsZip: "Зберегти як ZIP",
                 willAppear: "Результати з'являться тут",
                 download: "Завантажити",
             },
@@ -230,6 +232,7 @@ export const translations: Record<Locale, Translations> = {
                 description: "Images will appear here after processing",
                 processed: "Processed",
                 downloadAll: "Download all",
+                saveAsZip: "Save as ZIP",
                 willAppear: "Results will appear here",
                 download: "Download",
             },
@@ -311,6 +314,7 @@ export const translations: Record<Locale, Translations> = {
                 description: "Изображения появятся здесь после обработки",
                 processed: "Обработано",
                 downloadAll: "Скачать все",
+                saveAsZip: "Сохранить как ZIP",
                 willAppear: "Результаты появятся здесь",
                 download: "Скачать",
             },

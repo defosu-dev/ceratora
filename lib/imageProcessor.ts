@@ -1,8 +1,6 @@
-// lib/imageProcessor.ts
-
 export interface ImageProcessingOptions {
-    format?: "webp" | "png" | "jpeg";
-    quality?: number; // 0-100
+    format?: "webp" | "png" | "jpeg" | "avif";
+    quality?: number;
     cornerRadius?: number;
     maxSizeKB?: number;
     maintainAspectRatio?: boolean;
@@ -21,6 +19,102 @@ export interface ProcessedImage {
     format: string;
     appliedQuality: number;
 }
+
+type SupportedFormat = NonNullable<ImageProcessingOptions["format"]>;
+
+// ─── Lazy Loaders ─────────────────────────────────────────────────────────────
+
+let _avif: Promise<typeof import("@jsquash/avif")> | null = null;
+let _png: Promise<typeof import("@jsquash/png")> | null = null;
+let _webp: Promise<typeof import("@jsquash/webp")> | null = null;
+let _jpeg: Promise<typeof import("@jsquash/jpeg")> | null = null;
+
+function loadAvif(): Promise<typeof import("@jsquash/avif")> {
+    _avif ??= import("@jsquash/avif");
+    return _avif;
+}
+
+function loadPng(): Promise<typeof import("@jsquash/png")> {
+    _png ??= import("@jsquash/png");
+    return _png;
+}
+
+function loadWebp(): Promise<typeof import("@jsquash/webp")> {
+    _webp ??= import("@jsquash/webp");
+    return _webp;
+}
+
+function loadJpeg(): Promise<typeof import("@jsquash/jpeg")> {
+    _jpeg ??= import("@jsquash/jpeg");
+    return _jpeg;
+}
+
+// ─── Format Encoders ──────────────────────────────────────────────────────────
+
+async function encodeAvif(
+    imageData: ImageData,
+    quality: number,
+): Promise<Blob> {
+    const mod = await loadAvif();
+    const buffer = await mod.encode(imageData, {
+        quality,
+        qualityAlpha: quality,
+        speed: 6,
+    });
+    return new Blob([buffer], { type: "image/avif" });
+}
+
+async function encodePng(imageData: ImageData): Promise<Blob> {
+    const mod = await loadPng();
+    const buffer = await mod.encode(imageData);
+    return new Blob([buffer], { type: "image/png" });
+}
+
+async function encodeWebp(
+    imageData: ImageData,
+    quality: number,
+): Promise<Blob> {
+    const mod = await loadWebp();
+    const buffer = await mod.encode(imageData, {
+        quality,
+        method: 4,
+    });
+    return new Blob([buffer], { type: "image/webp" });
+}
+
+async function encodeJpeg(
+    imageData: ImageData,
+    quality: number,
+): Promise<Blob> {
+    const mod = await loadJpeg();
+    const buffer = await mod.encode(imageData, {
+        quality,
+        progressive: true,
+        optimize_coding: true,
+    });
+    return new Blob([buffer], { type: "image/jpeg" });
+}
+
+// ─── Warmup ───────────────────────────────────────────────────────────────────
+
+async function warmupEncoder(format: SupportedFormat): Promise<void> {
+    switch (format) {
+        case "avif":
+            await loadAvif();
+            break;
+        case "png":
+            await loadPng();
+            break;
+        case "webp":
+            await loadWebp();
+            break;
+        case "jpeg":
+            await loadJpeg();
+            break;
+    }
+}
+
+// ─── Main Processor ───────────────────────────────────────────────────────────
 
 export class ImageProcessor {
     static async processImage(
@@ -48,13 +142,17 @@ export class ImageProcessor {
         );
 
         const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext("2d", { alpha: true })!;
+        const ctx = canvas.getContext("2d", {
+            alpha: true,
+        }) as OffscreenCanvasRenderingContext2D;
 
         ctx.clearRect(0, 0, width, height);
 
         if (cornerRadius > 0) {
-            const maxRadius = Math.min(width, height) / 2;
-            const effectiveRadius = Math.min(cornerRadius, maxRadius);
+            const effectiveRadius = Math.min(
+                cornerRadius,
+                Math.min(width, height) / 2,
+            );
             this.applyRoundedCorners(ctx, width, height, effectiveRadius);
             ctx.clip();
         }
@@ -62,20 +160,22 @@ export class ImageProcessor {
         ctx.drawImage(imageBitmap, 0, 0, width, height);
         imageBitmap.close();
 
+        const imageData = this.readImageData(canvas);
+
         let blob: Blob;
         let appliedQuality: number;
 
         if (maxSizeKB !== undefined) {
             const result = await this.compressToSize(
-                canvas,
+                imageData,
                 format,
                 maxSizeKB * 1024,
             );
             blob = result.blob;
             appliedQuality = result.quality;
         } else {
+            blob = await this.encodeImageData(imageData, format, quality);
             appliedQuality = quality;
-            blob = await this.convertToBlob(canvas, format, quality);
         }
 
         return {
@@ -91,80 +191,54 @@ export class ImageProcessor {
         };
     }
 
-    private static async convertToBlob(
-        canvas: OffscreenCanvas,
-        format: string,
+    private static async encodeImageData(
+        imageData: ImageData,
+        format: SupportedFormat,
         quality: number,
     ): Promise<Blob> {
-        let normalizedQuality = quality / 100;
-
-        if (format === "webp" && normalizedQuality > 0.95)
-            normalizedQuality = 0.95;
-        if (format === "jpeg" && normalizedQuality > 0.98)
-            normalizedQuality = 0.98;
-
-        if (format === "png") {
-            return this.compressPNGOffscreen(canvas, normalizedQuality);
+        switch (format) {
+            case "avif":
+                return encodeAvif(imageData, quality);
+            case "png":
+                return encodePng(imageData);
+            case "webp":
+                return encodeWebp(imageData, quality);
+            case "jpeg":
+                return encodeJpeg(imageData, quality);
         }
-
-        const blob = await canvas.convertToBlob({
-            type: `image/${format}`,
-            quality: normalizedQuality,
-        });
-
-        if (!blob || blob.size === 0) {
-            throw new Error(`Конвертація в ${format} не вдалась`);
-        }
-
-        return blob;
     }
 
-    private static async compressPNGOffscreen(
-        canvas: OffscreenCanvas,
-        quality: number,
-    ): Promise<Blob> {
-        const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-
-        let colorDepth: number;
-        if (quality >= 0.9) colorDepth = 256;
-        else if (quality >= 0.7) colorDepth = 128;
-        else if (quality >= 0.5) colorDepth = 64;
-        else if (quality >= 0.3) colorDepth = 32;
-        else colorDepth = 16;
-
-        const step = Math.floor(256 / colorDepth);
-
-        for (let i = 0; i < data.length; i += 4) {
-            data[i] = Math.round(data[i] / step) * step;
-            data[i + 1] = Math.round(data[i + 1] / step) * step;
-            data[i + 2] = Math.round(data[i + 2] / step) * step;
-        }
-
-        const tempCanvas = new OffscreenCanvas(canvas.width, canvas.height);
-        const tempCtx = tempCanvas.getContext("2d")!;
-        tempCtx.putImageData(imageData, 0, 0);
-
-        return tempCanvas.convertToBlob({ type: "image/png" });
+    private static readImageData(canvas: OffscreenCanvas): ImageData {
+        const ctx = canvas.getContext("2d", {
+            willReadFrequently: true,
+        }) as OffscreenCanvasRenderingContext2D;
+        return ctx.getImageData(0, 0, canvas.width, canvas.height);
     }
 
     private static async compressToSize(
-        canvas: OffscreenCanvas,
-        format: string,
+        imageData: ImageData,
+        format: SupportedFormat,
         targetSize: number,
     ): Promise<{ blob: Blob; quality: number }> {
+        if (format === "png") {
+            const blob = await encodePng(imageData);
+            return { blob, quality: 100 };
+        }
+
+        const maxQuality = format === "avif" ? 90 : 95;
         let minQuality = 10;
-        let maxQuality = format === "webp" ? 95 : 98;
+        let maxQ = maxQuality;
         let bestBlob: Blob | null = null;
         let bestQuality = 0;
-        const maxAttempts = 12;
-        let attempts = 0;
 
-        while (attempts < maxAttempts && maxQuality - minQuality > 2) {
-            const currentQuality = Math.round((minQuality + maxQuality) / 2);
-            const blob = await this.convertToBlob(
-                canvas,
+        for (
+            let attempts = 0;
+            attempts < 12 && maxQ - minQuality > 2;
+            attempts++
+        ) {
+            const currentQuality = Math.round((minQuality + maxQ) / 2);
+            const blob = await this.encodeImageData(
+                imageData,
                 format,
                 currentQuality,
             );
@@ -174,34 +248,35 @@ export class ImageProcessor {
                 bestQuality = currentQuality;
                 minQuality = currentQuality;
             } else {
-                maxQuality = currentQuality;
+                maxQ = currentQuality;
             }
-
-            attempts++;
         }
 
         if (!bestBlob) {
+            bestBlob = await this.encodeImageData(
+                imageData,
+                format,
+                minQuality,
+            );
             bestQuality = minQuality;
-            bestBlob = await this.convertToBlob(canvas, format, minQuality);
         }
 
         return { blob: bestBlob, quality: bestQuality };
     }
 
-    /**
-     * Обробка масиву зображень з підтримкою скасування через AbortSignal.
-     * Якщо signal.aborted стає true — цикл зупиняється після поточного файлу.
-     */
     static async processImages(
         files: File[],
         options: ImageProcessingOptions = {},
         onProgress?: (processed: number, total: number) => void,
         signal?: AbortSignal,
     ): Promise<ProcessedImage[]> {
+        if (options.format) {
+            await warmupEncoder(options.format);
+        }
+
         const results: ProcessedImage[] = [];
 
         for (let i = 0; i < files.length; i++) {
-            // Перевірка перед кожним файлом — якщо скасовано, виходимо
             if (signal?.aborted) break;
 
             try {
@@ -209,7 +284,7 @@ export class ImageProcessor {
                 results.push(processed);
                 onProgress?.(i + 1, files.length);
             } catch (error) {
-                console.error(`Помилка обробки ${files[i].name}:`, error);
+                console.error(`Error processing ${files[i].name}:`, error);
             }
         }
 
@@ -252,8 +327,8 @@ export class ImageProcessor {
                 }
             }
         } else {
-            width = maxWidth || width;
-            height = maxHeight || height;
+            width = maxWidth ?? width;
+            height = maxHeight ?? height;
         }
 
         return { width: Math.round(width), height: Math.round(height) };
@@ -296,6 +371,22 @@ export class ImageProcessor {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
+
+    static async downloadAsZip(images: ProcessedImage[]): Promise<void> {
+        if (images.length === 0) return;
+        const JSZip = (await import("jszip")).default;
+        const zip = new JSZip();
+        images.forEach((img) => zip.file(img.fileName, img.blob));
+        const blob = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "images.zip";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
 }
 
 export const ImageUtils = {
@@ -304,13 +395,15 @@ export const ImageUtils = {
         const k = 1024;
         const sizes = ["Bytes", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return (
-            Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i]
-        );
+        return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
     },
 
     isFormatSupported(): boolean {
         return typeof OffscreenCanvas !== "undefined";
+    },
+
+    isAvifSupported(): boolean {
+        return true;
     },
 
     async getImageInfo(

@@ -31,7 +31,6 @@ export default async function RootLayout({
     return (
         <html lang={locale} suppressHydrationWarning>
             <head>
-                {/* Лише тема — встановлюємо до рендеру, щоб уникнути FOUC */}
                 <script
                     dangerouslySetInnerHTML={{
                         __html: `
