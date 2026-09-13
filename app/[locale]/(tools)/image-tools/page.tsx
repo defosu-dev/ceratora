@@ -109,7 +109,7 @@ export default function ImageToolsPage() {
     const updatePreviewScale = () => {
         const img = previewImgRef.current;
         if (!img || !img.naturalWidth || !img.clientWidth) return;
-        setPreviewScale(img.clientWidth / img.naturalWidth);
+        setPreviewScale(Math.min(1, img.clientWidth / img.naturalWidth));
     };
 
     const getScaledRadius = (): string => {
@@ -709,10 +709,11 @@ export default function ImageToolsPage() {
                                                     ref={previewImgRef}
                                                     src={previewUrl}
                                                     alt="preview"
-                                                    className="w-full cursor-zoom-in transition-opacity hover:opacity-90"
+                                                    className="block max-w-full cursor-zoom-in transition-opacity hover:opacity-90"
                                                     style={{
                                                         borderRadius:
                                                             getScaledRadius(),
+                                                        filter: "drop-shadow(0 0 1px #e5e5e5)",
                                                     }}
                                                     onLoad={updatePreviewScale}
                                                     onClick={() =>

@@ -262,16 +262,17 @@ export class ImageProcessor {
         height: number,
         radius: number,
     ): void {
+        const r = Math.max(0, Math.min(radius, width / 2, height / 2));
         ctx.beginPath();
-        ctx.moveTo(radius, 0);
-        ctx.lineTo(width - radius, 0);
-        ctx.quadraticCurveTo(width, 0, width, radius);
-        ctx.lineTo(width, height - radius);
-        ctx.quadraticCurveTo(width, height, width - radius, height);
-        ctx.lineTo(radius, height);
-        ctx.quadraticCurveTo(0, height, 0, height - radius);
-        ctx.lineTo(0, radius);
-        ctx.quadraticCurveTo(0, 0, radius, 0);
+        ctx.moveTo(r, 0);
+        ctx.lineTo(width - r, 0);
+        ctx.arcTo(width, 0, width, r, r);
+        ctx.lineTo(width, height - r);
+        ctx.arcTo(width, height, width - r, height, r);
+        ctx.lineTo(r, height);
+        ctx.arcTo(0, height, 0, height - r, r);
+        ctx.lineTo(0, r);
+        ctx.arcTo(0, 0, r, 0, r);
         ctx.closePath();
     }
 
