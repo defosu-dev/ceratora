@@ -18,12 +18,14 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTranslation } from "@/lib/i18n";
 import {
+    ArchiveUtils,
     ImageProcessingOptions,
     ImageProcessor,
     ProcessedImage,
 } from "@/lib/imageProcessor";
 import {
     Download,
+    FolderArchive,
     Image as ImageIcon,
     Settings,
     Trash2,
@@ -58,6 +60,7 @@ export default function ImageToolsPage() {
         [],
     );
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isCreatingZip, setIsCreatingZip] = useState(false);
     const [progress, setProgress] = useState(0);
     const [qualityMode, setQualityMode] = useState<"manual" | "auto">("manual");
     const [options, setOptions] = useState<ImageProcessingOptions>({
@@ -115,17 +118,44 @@ export default function ImageToolsPage() {
     };
 
     const addFiles = useCallback(
-        (incomingFiles: File[]) => {
-            const imageFiles = incomingFiles.filter(
-                (file) =>
-                    file.type.startsWith("image/") ||
-                    /\.(png|jpe?g|webp|gif|bmp|svg|avif|tiff?|ico|heic|heif)$/i.test(
-                        file.name,
-                    ),
-            );
-            if (imageFiles.length === 0) return;
+        async (incomingFiles: File[]) => {
+            const rawImages: File[] = [];
+            const archiveFiles: File[] = [];
 
-            const newEntries = imageFiles.map((file) => ({
+            for (const file of incomingFiles) {
+                if (ArchiveUtils.isArchive(file)) {
+                    archiveFiles.push(file);
+                } else if (ArchiveUtils.isImageFile(file.name, file.type)) {
+                    rawImages.push(file);
+                }
+            }
+
+            let extractedCount = 0;
+            if (archiveFiles.length > 0) {
+                const toastId = toast.loading(t.imageTools.toast.unzipping);
+                try {
+                    for (const arc of archiveFiles) {
+                        const imagesFromArchive =
+                            await ArchiveUtils.extractImagesFromArchive(arc);
+                        if (imagesFromArchive.length > 0) {
+                            extractedCount += imagesFromArchive.length;
+                            rawImages.push(...imagesFromArchive);
+                        }
+                    }
+                    toast.dismiss(toastId);
+                    if (extractedCount === 0 && rawImages.length === 0) {
+                        toast.warn(t.imageTools.toast.noImagesInZip);
+                        return;
+                    }
+                } catch {
+                    toast.dismiss(toastId);
+                    toast.error(t.imageTools.toast.error);
+                }
+            }
+
+            if (rawImages.length === 0) return;
+
+            const newEntries = rawImages.map((file) => ({
                 file,
                 id: crypto.randomUUID(),
                 selected: true,
@@ -133,11 +163,15 @@ export default function ImageToolsPage() {
             setFiles((prev) => [...prev, ...newEntries]);
             resetResults();
 
-            if (imageFiles.length === 1) {
+            if (extractedCount > 0) {
+                toast.success(
+                    `${t.imageTools.toast.unzippedCount} ${extractedCount}`,
+                );
+            } else if (rawImages.length === 1) {
                 toast.success(t.imageTools.toast.uploadedSingle);
             } else {
                 toast.success(
-                    `${t.imageTools.toast.uploadedCount} ${imageFiles.length}`,
+                    `${t.imageTools.toast.uploadedCount} ${rawImages.length}`,
                 );
             }
         },
@@ -193,29 +227,27 @@ export default function ImageToolsPage() {
                 }
             }
 
-            // 3. Filter valid image files and deduplicate
+            // 3. Filter valid image & archive files and deduplicate
             const seen = new Set<string>();
-            const imageFiles: File[] = [];
+            const validFiles: File[] = [];
 
             for (const file of candidateFiles) {
-                const isImage =
-                    file.type.startsWith("image/") ||
-                    /\.(png|jpe?g|webp|gif|bmp|svg|avif|tiff?|ico|heic|heif)$/i.test(
-                        file.name,
-                    );
+                const isValid =
+                    ArchiveUtils.isImageFile(file.name, file.type) ||
+                    ArchiveUtils.isArchive(file);
 
-                if (isImage) {
+                if (isValid) {
                     const key = `${file.name}_${file.size}_${file.lastModified}`;
                     if (!seen.has(key)) {
                         seen.add(key);
-                        imageFiles.push(file);
+                        validFiles.push(file);
                     }
                 }
             }
 
-            if (imageFiles.length > 0) {
+            if (validFiles.length > 0) {
                 e.preventDefault();
-                addFiles(imageFiles);
+                addFiles(validFiles);
             }
         };
 
@@ -294,6 +326,22 @@ export default function ImageToolsPage() {
             toast.success(t.imageTools.toast.downloadSuccess);
         } catch {
             toast.error(t.imageTools.toast.downloadError);
+        }
+    };
+
+    const downloadZip = async () => {
+        if (processedImages.length === 0) return;
+        setIsCreatingZip(true);
+        try {
+            await ArchiveUtils.downloadZip(
+                processedImages,
+                `ceratora_processed_${Date.now()}.zip`,
+            );
+            toast.success(t.imageTools.toast.zipDownloadSuccess);
+        } catch {
+            toast.error(t.imageTools.toast.zipDownloadError);
+        } finally {
+            setIsCreatingZip(false);
         }
     };
 
@@ -748,7 +796,7 @@ export default function ImageToolsPage() {
                                     id="fileInput"
                                     type="file"
                                     multiple
-                                    accept="image/*"
+                                    accept="image/*,.zip,.7z,.rar,.tar,.tar.gz,.tgz,.cbz,application/zip,application/x-zip-compressed,application/x-7z-compressed,application/x-rar-compressed"
                                     onChange={handleFileSelect}
                                     className="hidden"
                                 />
@@ -843,7 +891,7 @@ export default function ImageToolsPage() {
 
                     <Card>
                         <CardHeader>
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                 <div>
                                     <CardTitle>
                                         {t.imageTools.results.title}
@@ -855,10 +903,61 @@ export default function ImageToolsPage() {
                                     </CardDescription>
                                 </div>
                                 {processedImages.length > 0 && (
-                                    <Button onClick={downloadAll} size="sm">
-                                        <Download className="h-4 w-4 mr-2" />
-                                        {t.imageTools.results.downloadAll}
-                                    </Button>
+                                    <div className="flex flex-col items-end gap-1">
+                                        {processedImages.length > 10 ? (
+                                            <>
+                                                <Button
+                                                    onClick={downloadZip}
+                                                    disabled={isCreatingZip}
+                                                    size="sm"
+                                                >
+                                                    <FolderArchive className="h-4 w-4 mr-2" />
+                                                    {isCreatingZip
+                                                        ? "..."
+                                                        : t.imageTools.results
+                                                              .downloadZip}
+                                                </Button>
+                                                <span className="text-[11px] text-muted-foreground text-right">
+                                                    {
+                                                        t.imageTools.results
+                                                            .zipOnlyNotice
+                                                    }
+                                                </span>
+                                            </>
+                                        ) : processedImages.length > 1 ? (
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    onClick={downloadAll}
+                                                    size="sm"
+                                                >
+                                                    <Download className="h-4 w-4 mr-2" />
+                                                    {
+                                                        t.imageTools.results
+                                                            .downloadAll
+                                                    }
+                                                </Button>
+                                                <Button
+                                                    onClick={downloadZip}
+                                                    disabled={isCreatingZip}
+                                                    size="sm"
+                                                >
+                                                    <FolderArchive className="h-4 w-4 mr-2" />
+                                                    {isCreatingZip
+                                                        ? "..."
+                                                        : "ZIP"}
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <Button
+                                                onClick={downloadAll}
+                                                size="sm"
+                                            >
+                                                <Download className="h-4 w-4 mr-2" />
+                                                {t.imageTools.results.download}
+                                            </Button>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </CardHeader>
@@ -999,7 +1098,6 @@ export default function ImageToolsPage() {
                                               const img = previewImgRef.current;
                                               if (!img || !img.naturalWidth)
                                                   return `${activeRadius}px`;
-                                              // В модалці img обмежений 90vw/90vh — беремо менший з двох варіантів масштабу
                                               const scaleW =
                                                   (window.innerWidth * 0.9) /
                                                   img.naturalWidth;

@@ -68,6 +68,8 @@ export interface Translations {
             description: string;
             processed: string;
             downloadAll: string;
+            downloadZip: string;
+            zipOnlyNotice: string;
             willAppear: string;
             download: string;
         };
@@ -80,6 +82,11 @@ export interface Translations {
             downloadError: string;
             uploadedSingle: string;
             uploadedCount: string;
+            unzipping: string;
+            unzippedCount: string;
+            noImagesInZip: string;
+            zipDownloadSuccess: string;
+            zipDownloadError: string;
         };
     };
 }
@@ -108,8 +115,8 @@ export const translations: Record<Locale, Translations> = {
                 title: "Завантаження",
                 description: "Перетягніть зображення або виберіть файли",
                 dropzone:
-                    "Перетягніть файли сюди, вставте через Ctrl + V або натисніть для вибору",
-                formats: "PNG, JPG, WEBP до 100 файлів",
+                    "Перетягніть файли або архів (ZIP, 7Z) сюди, вставте через Ctrl + V або натисніть для вибору",
+                formats: "PNG, JPG, WEBP, ZIP, 7Z до 100 файлів",
                 selected: "Вибрано:",
                 of: "з",
                 deleteSelected: "Видалити вибрані",
@@ -153,6 +160,9 @@ export const translations: Record<Locale, Translations> = {
                 description: "Зображення з'являться тут після обробки",
                 processed: "Оброблено",
                 downloadAll: "Завантажити всі",
+                downloadZip: "Завантажити архівом (ZIP)",
+                zipOnlyNotice:
+                    "Більше 10 зображень — завантаження доступне тільки архівом",
                 willAppear: "Результати з'являться тут",
                 download: "Завантажити",
             },
@@ -165,6 +175,11 @@ export const translations: Record<Locale, Translations> = {
                 downloadError: "Помилка завантаження файлів",
                 uploadedSingle: "Зображення успішно додано!",
                 uploadedCount: "Успішно додано зображень:",
+                unzipping: "Розпакування архіву...",
+                unzippedCount: "Витягнуто зображень з архіву:",
+                noImagesInZip: "В архіві не знайдено підтримуваних зображень",
+                zipDownloadSuccess: "Архів успішно завантажено",
+                zipDownloadError: "Помилка створення архіву",
             },
         },
     },
@@ -191,8 +206,8 @@ export const translations: Record<Locale, Translations> = {
                 title: "Upload",
                 description: "Drag and drop images or select files",
                 dropzone:
-                    "Drop files here, paste with Ctrl + V or click to select",
-                formats: "PNG, JPG, WEBP up to 100 files",
+                    "Drop files or archive (ZIP, 7Z) here, paste with Ctrl + V or click to select",
+                formats: "PNG, JPG, WEBP, ZIP, 7Z up to 100 files",
                 selected: "Selected:",
                 of: "of",
                 deleteSelected: "Delete selected",
@@ -236,6 +251,9 @@ export const translations: Record<Locale, Translations> = {
                 description: "Images will appear here after processing",
                 processed: "Processed",
                 downloadAll: "Download all",
+                downloadZip: "Download as ZIP",
+                zipOnlyNotice:
+                    "More than 10 images — download is available only as archive",
                 willAppear: "Results will appear here",
                 download: "Download",
             },
@@ -248,6 +266,11 @@ export const translations: Record<Locale, Translations> = {
                 downloadError: "File download error",
                 uploadedSingle: "Image added successfully!",
                 uploadedCount: "Images added successfully:",
+                unzipping: "Unpacking archive...",
+                unzippedCount: "Extracted images from archive:",
+                noImagesInZip: "No supported images found in the archive",
+                zipDownloadSuccess: "Archive downloaded successfully",
+                zipDownloadError: "Error creating archive",
             },
         },
     },
@@ -274,8 +297,8 @@ export const translations: Record<Locale, Translations> = {
                 title: "Загрузка",
                 description: "Перетащите изображения или выберите файлы",
                 dropzone:
-                    "Перетащите файлы сюда, вставьте через Ctrl + V или нажмите для выбора",
-                formats: "PNG, JPG, WEBP до 100 файлов",
+                    "Перетащите файлы или архив (ZIP, 7Z) сюда, вставьте через Ctrl + V или нажмите для выбора",
+                formats: "PNG, JPG, WEBP, ZIP, 7Z до 100 файлов",
                 selected: "Выбрано:",
                 of: "из",
                 deleteSelected: "Удалить выбранные",
@@ -320,6 +343,9 @@ export const translations: Record<Locale, Translations> = {
                 description: "Изображения появятся здесь после обработки",
                 processed: "Обработано",
                 downloadAll: "Скачать все",
+                downloadZip: "Скачать архивом (ZIP)",
+                zipOnlyNotice:
+                    "Более 10 изображений — скачивание доступно только архивом",
                 willAppear: "Результаты появятся здесь",
                 download: "Скачать",
             },
@@ -332,6 +358,11 @@ export const translations: Record<Locale, Translations> = {
                 downloadError: "Ошибка загрузки файлов",
                 uploadedSingle: "Изображение успешно добавлено!",
                 uploadedCount: "Успешно добавлено изображений:",
+                unzipping: "Распаковка архива...",
+                unzippedCount: "Извлечено изображений из архива:",
+                noImagesInZip: "В архиве не найдено поддерживаемых изображений",
+                zipDownloadSuccess: "Архив успешно скачан",
+                zipDownloadError: "Ошибка создания архива",
             },
         },
     },

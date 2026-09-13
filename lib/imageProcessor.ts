@@ -1,5 +1,7 @@
 // lib/imageProcessor.ts
 
+import JSZip from "jszip";
+
 export interface ImageProcessingOptions {
     format?: "webp" | "png" | "jpeg";
     quality?: number; // 0-100
@@ -188,10 +190,6 @@ export class ImageProcessor {
         return { blob: bestBlob, quality: bestQuality };
     }
 
-    /**
-     * Обробка масиву зображень з підтримкою скасування через AbortSignal.
-     * Якщо signal.aborted стає true — цикл зупиняється після поточного файлу.
-     */
     static async processImages(
         files: File[],
         options: ImageProcessingOptions = {},
@@ -201,7 +199,6 @@ export class ImageProcessor {
         const results: ProcessedImage[] = [];
 
         for (let i = 0; i < files.length; i++) {
-            // Перевірка перед кожним файлом — якщо скасовано, виходимо
             if (signal?.aborted) break;
 
             try {
@@ -297,6 +294,209 @@ export class ImageProcessor {
         URL.revokeObjectURL(url);
     }
 }
+
+export const ArchiveUtils = {
+    isArchive(file: File): boolean {
+        const name = file.name.toLowerCase();
+        return (
+            name.endsWith(".zip") ||
+            name.endsWith(".7z") ||
+            name.endsWith(".rar") ||
+            name.endsWith(".tar") ||
+            name.endsWith(".tar.gz") ||
+            name.endsWith(".tgz") ||
+            name.endsWith(".tar.bz2") ||
+            name.endsWith(".tbz2") ||
+            name.endsWith(".tar.xz") ||
+            name.endsWith(".txz") ||
+            name.endsWith(".cbz") ||
+            name.endsWith(".cbr") ||
+            name.endsWith(".gz") ||
+            name.endsWith(".bz2") ||
+            name.endsWith(".xz") ||
+            file.type === "application/zip" ||
+            file.type === "application/x-zip-compressed" ||
+            file.type === "application/x-7z-compressed" ||
+            file.type === "application/x-rar-compressed" ||
+            file.type === "application/x-tar"
+        );
+    },
+
+    isImageFile(filename: string, mimeType?: string): boolean {
+        if (mimeType && mimeType.startsWith("image/")) return true;
+        return /\.(png|jpe?g|webp|gif|bmp|svg|avif|tiff?|ico|heic|heif)$/i.test(
+            filename,
+        );
+    },
+
+    getMimeType(filename: string): string {
+        const ext = filename.split(".").pop()?.toLowerCase();
+        switch (ext) {
+            case "jpg":
+            case "jpeg":
+                return "image/jpeg";
+            case "png":
+                return "image/png";
+            case "webp":
+                return "image/webp";
+            case "gif":
+                return "image/gif";
+            case "svg":
+                return "image/svg+xml";
+            case "bmp":
+                return "image/bmp";
+            case "avif":
+                return "image/avif";
+            case "tif":
+            case "tiff":
+                return "image/tiff";
+            case "ico":
+                return "image/x-icon";
+            case "heic":
+            case "heif":
+                return "image/heic";
+            default:
+                return "image/png";
+        }
+    },
+
+    async extractImagesFromArchive(file: File): Promise<File[]> {
+        const extractedFiles: File[] = [];
+
+        // 1. Спробуємо через libarchive.js (підтримує 7z, rar, tar, zip, iso тощо у WebWorker)
+        if (typeof window !== "undefined") {
+            try {
+                const { Archive } = await import("libarchive.js");
+                Archive.init({
+                    workerUrl: "/libarchive/worker-bundle.js",
+                });
+                const archive = await Archive.open(file);
+                const entries = await archive.getFilesArray();
+
+                for (const item of entries) {
+                    const fileName = item.file.name;
+                    const fullPath = item.path
+                        ? `${item.path}${fileName}`
+                        : fileName;
+                    if (
+                        !fullPath.startsWith("__MACOSX/") &&
+                        !fullPath.includes("/.DS_Store") &&
+                        !fullPath.endsWith(".DS_Store") &&
+                        ArchiveUtils.isImageFile(fileName)
+                    ) {
+                        const extractedFile = await item.file.extract();
+                        const mimeType =
+                            ArchiveUtils.getMimeType(fileName) ||
+                            extractedFile.type ||
+                            "image/png";
+                        const imageFile = new File(
+                            [extractedFile],
+                            fileName,
+                            { type: mimeType },
+                        );
+                        extractedFiles.push(imageFile);
+                    }
+                }
+                await archive.close();
+
+                if (extractedFiles.length > 0) {
+                    return extractedFiles;
+                }
+            } catch (archiveError) {
+                console.warn(
+                    "libarchive.js extraction failed, attempting fallback:",
+                    archiveError,
+                );
+            }
+        }
+
+        // 2. Fallback до JSZip якщо це zip/cbz
+        const lowerName = file.name.toLowerCase();
+        if (
+            lowerName.endsWith(".zip") ||
+            lowerName.endsWith(".cbz") ||
+            file.type.includes("zip")
+        ) {
+            try {
+                const zip = await JSZip.loadAsync(file);
+                const entries: { path: string; entry: JSZip.JSZipObject }[] =
+                    [];
+                zip.forEach((relativePath, entry) => {
+                    if (
+                        !entry.dir &&
+                        !relativePath.startsWith("__MACOSX/") &&
+                        !relativePath.includes("/.DS_Store") &&
+                        !relativePath.endsWith(".DS_Store") &&
+                        ArchiveUtils.isImageFile(relativePath)
+                    ) {
+                        entries.push({ path: relativePath, entry });
+                    }
+                });
+
+                for (const item of entries) {
+                    const blob = await item.entry.async("blob");
+                    const baseName =
+                        item.path.split("/").pop() || item.path;
+                    const mimeType =
+                        ArchiveUtils.getMimeType(baseName) ||
+                        blob.type ||
+                        "image/png";
+                    const imageFile = new File([blob], baseName, {
+                        type: mimeType,
+                    });
+                    extractedFiles.push(imageFile);
+                }
+            } catch (zipError) {
+                console.error("JSZip fallback failed:", zipError);
+            }
+        }
+
+        return extractedFiles;
+    },
+
+    // Backward-compatible alias
+    async extractImagesFromZip(file: File): Promise<File[]> {
+        return this.extractImagesFromArchive(file);
+    },
+
+    async downloadZip(
+        images: ProcessedImage[],
+        zipFileName = "ceratora_images.zip",
+    ): Promise<void> {
+        const zip = new JSZip();
+        const usedNames = new Set<string>();
+
+        for (const img of images) {
+            let name = img.fileName;
+            if (usedNames.has(name)) {
+                const ext = name.split(".").pop() || "";
+                const base = name.replace(/\.[^/.]+$/, "");
+                let counter = 1;
+                while (usedNames.has(`${base}_${counter}.${ext}`)) {
+                    counter++;
+                }
+                name = `${base}_${counter}.${ext}`;
+            }
+            usedNames.add(name);
+            zip.file(name, img.blob);
+        }
+
+        const content = await zip.generateAsync({
+            type: "blob",
+            compression: "DEFLATE",
+            compressionOptions: { level: 6 },
+        });
+
+        const url = URL.createObjectURL(content);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = zipFileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    },
+};
 
 export const ImageUtils = {
     formatFileSize(bytes: number): string {
