@@ -709,11 +709,12 @@ export default function ImageToolsPage() {
                                                     ref={previewImgRef}
                                                     src={previewUrl}
                                                     alt="preview"
-                                                    className="block max-w-full cursor-zoom-in transition-opacity hover:opacity-90"
+                                                    className="block max-w-full self-start cursor-zoom-in transition-opacity hover:opacity-90"
                                                     style={{
                                                         borderRadius:
                                                             getScaledRadius(),
-                                                        filter: "drop-shadow(0 0 1px #e5e5e5)",
+                                                        boxShadow:
+                                                            "0 0 0 1px #e5e5e5",
                                                     }}
                                                     onLoad={updatePreviewScale}
                                                     onClick={() =>
