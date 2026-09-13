@@ -459,11 +459,21 @@ export default function ImageToolsPage() {
                                         </Label>
                                         <RadioGroup
                                             value={qualityMode}
-                                            onValueChange={(v) =>
-                                                setQualityMode(
-                                                    v as "manual" | "auto",
-                                                )
-                                            }
+                                            onValueChange={(v) => {
+                                                const mode = v as
+                                                    | "manual"
+                                                    | "auto";
+                                                setQualityMode(mode);
+                                                if (
+                                                    mode === "auto" &&
+                                                    !options.maxSizeKB
+                                                ) {
+                                                    setOptions({
+                                                        ...options,
+                                                        maxSizeKB: 35,
+                                                    });
+                                                }
+                                            }}
                                         >
                                             <div className="flex items-center space-x-2">
                                                 <RadioGroupItem
