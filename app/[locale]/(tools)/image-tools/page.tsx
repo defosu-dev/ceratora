@@ -88,6 +88,7 @@ export default function ImageToolsPage() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [isPreviewModalOpen, selectedProcessedImage]);
+
     const firstFileId = files[0]?.id;
     useEffect(() => {
         const firstFile = files[0]?.file ?? null;
@@ -113,30 +114,114 @@ export default function ImageToolsPage() {
         setProgress(0);
     };
 
+    const addFiles = useCallback(
+        (incomingFiles: File[]) => {
+            const imageFiles = incomingFiles.filter(
+                (file) =>
+                    file.type.startsWith("image/") ||
+                    /\.(png|jpe?g|webp|gif|bmp|svg|avif|tiff?|ico|heic|heif)$/i.test(
+                        file.name,
+                    ),
+            );
+            if (imageFiles.length === 0) return;
+
+            const newEntries = imageFiles.map((file) => ({
+                file,
+                id: crypto.randomUUID(),
+                selected: true,
+            }));
+            setFiles((prev) => [...prev, ...newEntries]);
+            resetResults();
+
+            if (imageFiles.length === 1) {
+                toast.success(t.imageTools.toast.uploadedSingle);
+            } else {
+                toast.success(
+                    `${t.imageTools.toast.uploadedCount} ${imageFiles.length}`,
+                );
+            }
+        },
+        [t],
+    );
+
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files) return;
-        const newFiles = Array.from(e.target.files).map((file) => ({
-            file,
-            id: crypto.randomUUID(),
-            selected: true,
-        }));
-        setFiles(newFiles);
-        resetResults();
+        const incoming = Array.from(e.target.files);
+        addFiles(incoming);
+        e.target.value = "";
     };
 
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        if (!e.dataTransfer.files) return;
-        const newFiles = Array.from(e.dataTransfer.files).map((file) => ({
-            file,
-            id: crypto.randomUUID(),
-            selected: true,
-        }));
-        setFiles(newFiles);
-        resetResults();
-    }, []);
+    const handleDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            if (!e.dataTransfer.files) return;
+            const incoming = Array.from(e.dataTransfer.files);
+            addFiles(incoming);
+        },
+        [addFiles],
+    );
 
     const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+    useEffect(() => {
+        const handlePaste = (e: ClipboardEvent) => {
+            const clipboardData = e.clipboardData;
+            if (!clipboardData) return;
+
+            const candidateFiles: File[] = [];
+
+            // 1. Extract all files from clipboardData.items
+            if (clipboardData.items && clipboardData.items.length > 0) {
+                for (let i = 0; i < clipboardData.items.length; i++) {
+                    const item = clipboardData.items[i];
+                    if (item.kind === "file") {
+                        const file = item.getAsFile();
+                        if (file) {
+                            candidateFiles.push(file);
+                        }
+                    }
+                }
+            }
+
+            // 2. Extract all files from clipboardData.files
+            if (clipboardData.files && clipboardData.files.length > 0) {
+                for (let i = 0; i < clipboardData.files.length; i++) {
+                    const file = clipboardData.files[i];
+                    if (file) {
+                        candidateFiles.push(file);
+                    }
+                }
+            }
+
+            // 3. Filter valid image files and deduplicate
+            const seen = new Set<string>();
+            const imageFiles: File[] = [];
+
+            for (const file of candidateFiles) {
+                const isImage =
+                    file.type.startsWith("image/") ||
+                    /\.(png|jpe?g|webp|gif|bmp|svg|avif|tiff?|ico|heic|heif)$/i.test(
+                        file.name,
+                    );
+
+                if (isImage) {
+                    const key = `${file.name}_${file.size}_${file.lastModified}`;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        imageFiles.push(file);
+                    }
+                }
+            }
+
+            if (imageFiles.length > 0) {
+                e.preventDefault();
+                addFiles(imageFiles);
+            }
+        };
+
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, [addFiles]);
 
     const toggleFileSelection = (id: string) => {
         setFiles((prev) =>
@@ -324,7 +409,7 @@ export default function ImageToolsPage() {
                                                 />
                                                 <Label
                                                     htmlFor="manual"
-                                                    className="font-normal"
+                                                    className="font-normal cursor-pointer"
                                                 >
                                                     {t.imageTools.format.manual}
                                                 </Label>
@@ -336,7 +421,7 @@ export default function ImageToolsPage() {
                                                 />
                                                 <Label
                                                     htmlFor="auto"
-                                                    className="font-normal"
+                                                    className="font-normal cursor-pointer"
                                                 >
                                                     {t.imageTools.format.auto}
                                                 </Label>
@@ -346,12 +431,19 @@ export default function ImageToolsPage() {
 
                                     {qualityMode === "manual" ? (
                                         <div className="space-y-2">
-                                            <Label>
-                                                {t.imageTools.format.quality} (
-                                                {options.quality}%)
-                                            </Label>
+                                            <div className="flex justify-between text-sm">
+                                                <Label>
+                                                    {
+                                                        t.imageTools.format
+                                                            .quality
+                                                    }
+                                                </Label>
+                                                <span className="font-mono font-medium">
+                                                    {options.quality}%
+                                                </span>
+                                            </div>
                                             <Slider
-                                                value={[options.quality || 80]}
+                                                value={[options.quality ?? 80]}
                                                 onValueChange={([value]) =>
                                                     setOptions({
                                                         ...options,
@@ -371,16 +463,17 @@ export default function ImageToolsPage() {
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
-                                            <Label>
+                                            <Label htmlFor="maxSizeKB">
                                                 {t.imageTools.format.maxSize}
                                             </Label>
                                             <Input
+                                                id="maxSizeKB"
                                                 type="number"
                                                 placeholder={
                                                     t.imageTools.format
                                                         .placeholder
                                                 }
-                                                value={options.maxSizeKB || ""}
+                                                value={options.maxSizeKB ?? ""}
                                                 onChange={(e) =>
                                                     setOptions({
                                                         ...options,
@@ -393,6 +486,7 @@ export default function ImageToolsPage() {
                                                             : undefined,
                                                     })
                                                 }
+                                                min={1}
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {
@@ -408,41 +502,59 @@ export default function ImageToolsPage() {
                                     value="size"
                                     className="space-y-4 mt-4"
                                 >
-                                    <div className="space-y-2">
-                                        <Label>
-                                            {t.imageTools.size.maxWidth}
-                                        </Label>
-                                        <Input
-                                            type="number"
-                                            placeholder={t.imageTools.size.auto}
-                                            value={options.maxWidth || ""}
-                                            onChange={(e) =>
-                                                setOptions({
-                                                    ...options,
-                                                    maxWidth: e.target.value
-                                                        ? Number(e.target.value)
-                                                        : undefined,
-                                                })
-                                            }
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label>
-                                            {t.imageTools.size.maxHeight}
-                                        </Label>
-                                        <Input
-                                            type="number"
-                                            placeholder={t.imageTools.size.auto}
-                                            value={options.maxHeight || ""}
-                                            onChange={(e) =>
-                                                setOptions({
-                                                    ...options,
-                                                    maxHeight: e.target.value
-                                                        ? Number(e.target.value)
-                                                        : undefined,
-                                                })
-                                            }
-                                        />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="maxWidth">
+                                                {t.imageTools.size.maxWidth}
+                                            </Label>
+                                            <Input
+                                                id="maxWidth"
+                                                type="number"
+                                                placeholder={
+                                                    t.imageTools.size.auto
+                                                }
+                                                value={options.maxWidth ?? ""}
+                                                onChange={(e) =>
+                                                    setOptions({
+                                                        ...options,
+                                                        maxWidth: e.target.value
+                                                            ? Number(
+                                                                  e.target
+                                                                      .value,
+                                                              )
+                                                            : undefined,
+                                                    })
+                                                }
+                                                min={1}
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label htmlFor="maxHeight">
+                                                {t.imageTools.size.maxHeight}
+                                            </Label>
+                                            <Input
+                                                id="maxHeight"
+                                                type="number"
+                                                placeholder={
+                                                    t.imageTools.size.auto
+                                                }
+                                                value={options.maxHeight ?? ""}
+                                                onChange={(e) =>
+                                                    setOptions({
+                                                        ...options,
+                                                        maxHeight: e.target
+                                                            .value
+                                                            ? Number(
+                                                                  e.target
+                                                                      .value,
+                                                              )
+                                                            : undefined,
+                                                    })
+                                                }
+                                                min={1}
+                                            />
+                                        </div>
                                     </div>
                                 </TabsContent>
 
@@ -455,7 +567,7 @@ export default function ImageToolsPage() {
                                             {t.imageTools.style.cornerRadius}
                                         </Label>
 
-                                        <div className="flex flex-wrap gap-2">
+                                        <div className="grid grid-cols-6 gap-1">
                                             {CORNER_RADIUS_PRESETS.map(
                                                 (preset) => (
                                                     <Button
@@ -467,6 +579,7 @@ export default function ImageToolsPage() {
                                                                 : "outline"
                                                         }
                                                         size="sm"
+                                                        className="text-xs px-1"
                                                         onClick={() =>
                                                             setOptions({
                                                                 ...options,
@@ -481,10 +594,11 @@ export default function ImageToolsPage() {
                                             )}
                                         </div>
 
-                                        <div className="flex gap-2">
+                                        <div className="flex items-center gap-3">
                                             <Input
                                                 type="number"
-                                                min="0"
+                                                min={0}
+                                                max={500}
                                                 value={
                                                     activeRadius === 9999
                                                         ? ""

@@ -78,6 +78,8 @@ export interface Translations {
             cancelledAll: string;
             downloadSuccess: string;
             downloadError: string;
+            uploadedSingle: string;
+            uploadedCount: string;
         };
     };
 }
@@ -105,7 +107,8 @@ export const translations: Record<Locale, Translations> = {
             upload: {
                 title: "Завантаження",
                 description: "Перетягніть зображення або виберіть файли",
-                dropzone: "Перетягніть файли сюди або натисніть для вибору",
+                dropzone:
+                    "Перетягніть файли сюди, вставте через Ctrl + V або натисніть для вибору",
                 formats: "PNG, JPG, WEBP до 100 файлів",
                 selected: "Вибрано:",
                 of: "з",
@@ -160,6 +163,8 @@ export const translations: Record<Locale, Translations> = {
                 cancelledAll: "Обробку скасовано",
                 downloadSuccess: "Файли завантажені успішно",
                 downloadError: "Помилка завантаження файлів",
+                uploadedSingle: "Зображення успішно додано!",
+                uploadedCount: "Успішно додано зображень:",
             },
         },
     },
@@ -185,7 +190,8 @@ export const translations: Record<Locale, Translations> = {
             upload: {
                 title: "Upload",
                 description: "Drag and drop images or select files",
-                dropzone: "Drop files here or click to select",
+                dropzone:
+                    "Drop files here, paste with Ctrl + V or click to select",
                 formats: "PNG, JPG, WEBP up to 100 files",
                 selected: "Selected:",
                 of: "of",
@@ -240,6 +246,8 @@ export const translations: Record<Locale, Translations> = {
                 cancelledAll: "Processing cancelled",
                 downloadSuccess: "Files downloaded successfully",
                 downloadError: "File download error",
+                uploadedSingle: "Image added successfully!",
+                uploadedCount: "Images added successfully:",
             },
         },
     },
@@ -265,7 +273,8 @@ export const translations: Record<Locale, Translations> = {
             upload: {
                 title: "Загрузка",
                 description: "Перетащите изображения или выберите файлы",
-                dropzone: "Перетащите файлы сюда или нажмите для выбора",
+                dropzone:
+                    "Перетащите файлы сюда, вставьте через Ctrl + V или нажмите для выбора",
                 formats: "PNG, JPG, WEBP до 100 файлов",
                 selected: "Выбрано:",
                 of: "из",
@@ -321,6 +330,8 @@ export const translations: Record<Locale, Translations> = {
                 cancelledAll: "Обработка отменена",
                 downloadSuccess: "Файлы загружены успешно",
                 downloadError: "Ошибка загрузки файлов",
+                uploadedSingle: "Изображение успешно добавлено!",
+                uploadedCount: "Успешно добавлено изображений:",
             },
         },
     },
