@@ -10,8 +10,7 @@ export interface Translations {
         codeTools: string;
     };
     footer: {
-        madeWith: string;
-        by: string;
+        developedBy: string;
     };
     imageTools: {
         title: string;
@@ -101,8 +100,7 @@ export const translations: Record<Locale, Translations> = {
             codeTools: "Робота з кодом",
         },
         footer: {
-            madeWith: "Зроблено з",
-            by: "",
+            developedBy: "Розроблено",
         },
         imageTools: {
             title: "Набір інструментів для роботи з зображеннями",
@@ -194,8 +192,7 @@ export const translations: Record<Locale, Translations> = {
             codeTools: "Code Tools",
         },
         footer: {
-            madeWith: "Made with",
-            by: "by",
+            developedBy: "Developed by",
         },
         imageTools: {
             title: "Image Processing Toolkit",
@@ -287,8 +284,7 @@ export const translations: Record<Locale, Translations> = {
             codeTools: "Работа с кодом",
         },
         footer: {
-            madeWith: "Сделано с",
-            by: "",
+            developedBy: "Разработано",
         },
         imageTools: {
             title: "Набор инструментов для работы с изображениями",
