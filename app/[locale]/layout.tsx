@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "../globals.css";
 import { AppProvider } from "./_components/AppProvider";
-import Header from "./_components/Header";
-import Footer from "./_components/Footer";
+import AppShell from "./_components/AppShell";
 import { Locale } from "@/lib/i18n";
 
 const geistSans = Geist({
@@ -50,13 +49,11 @@ export default async function RootLayout({
                 />
             </head>
             <body
-                className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen items-center font-sans bg-white dark:bg-black`}
+                className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}
                 suppressHydrationWarning
             >
                 <AppProvider initialLocale={locale as Locale}>
-                    <Header />
-                    {children}
-                    <Footer />
+                    <AppShell>{children}</AppShell>
                 </AppProvider>
             </body>
         </html>

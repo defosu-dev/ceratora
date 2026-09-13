@@ -3,8 +3,9 @@
 import React, {
     createContext,
     useContext,
-    useState,
     useEffect,
+    useRef,
+    useSyncExternalStore,
     ReactNode,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -12,9 +13,70 @@ import { Locale, LOCALES } from "@/lib/i18n";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "theme";
+const themeListeners = new Set<() => void>();
+
+function subscribeTheme(listener: () => void) {
+    themeListeners.add(listener);
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onMediaChange = () => {
+        try {
+            // Only follow the system when the user hasn't chosen explicitly.
+            if (!localStorage.getItem(THEME_STORAGE_KEY)) listener();
+        } catch {
+            listener();
+        }
+    };
+    const onStorage = (e: StorageEvent) => {
+        if (e.key === THEME_STORAGE_KEY) listener();
+    };
+
+    media.addEventListener("change", onMediaChange);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+        themeListeners.delete(listener);
+        media.removeEventListener("change", onMediaChange);
+        window.removeEventListener("storage", onStorage);
+    };
+}
+
+function getThemeSnapshot(): Theme {
+    try {
+        const saved = localStorage.getItem(THEME_STORAGE_KEY);
+        if (saved === "light" || saved === "dark") return saved;
+        return window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+    } catch {
+        return "light";
+    }
+}
+
+function getThemeServerSnapshot(): Theme {
+    return "light";
+}
+
+function applyTheme(theme: Theme) {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+}
+
+function storeTheme(theme: Theme) {
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+        // ignore (e.g. storage disabled)
+    }
+    applyTheme(theme);
+    themeListeners.forEach((listener) => listener());
+}
+
 interface AppContextType {
     locale: Locale;
-    theme: "light" | "dark";
+    theme: Theme;
     setLocale: (newLocale: Locale) => void;
     toggleTheme: () => void;
 }
@@ -39,32 +101,22 @@ export const AppProvider = ({
               ? (segment as Locale)
               : "en";
 
-    const [theme, setThemeState] = useState<"light" | "dark">("light");
+    const theme = useSyncExternalStore(
+        subscribeTheme,
+        getThemeSnapshot,
+        getThemeServerSnapshot,
+    );
 
+    // The inline script in the layout already applied the theme class before
+    // hydration, so keep the DOM in sync only for subsequent changes.
+    const isFirstThemeRun = useRef(true);
     useEffect(() => {
-        try {
-            const saved = localStorage.getItem("theme") as
-                | "light"
-                | "dark"
-                | null;
-            if (saved) {
-                setThemeState(saved);
-                document.documentElement.classList.toggle(
-                    "dark",
-                    saved === "dark",
-                );
-            } else {
-                const prefersDark = window.matchMedia(
-                    "(prefers-color-scheme: dark)",
-                ).matches;
-                const next = prefersDark ? "dark" : "light";
-                setThemeState(next);
-                document.documentElement.classList.toggle("dark", prefersDark);
-            }
-        } catch {
-            // ignore
+        if (isFirstThemeRun.current) {
+            isFirstThemeRun.current = false;
+            return;
         }
-    }, []);
+        applyTheme(theme);
+    }, [theme]);
 
     const setLocale = (newLocale: Locale) => {
         const rest = pathname.replace(/^\/[a-z]{2}/, "") || "/";
@@ -73,10 +125,7 @@ export const AppProvider = ({
     };
 
     const toggleTheme = () => {
-        const next = theme === "light" ? "dark" : "light";
-        setThemeState(next);
-        localStorage.setItem("theme", next);
-        document.documentElement.classList.toggle("dark", next === "dark");
+        storeTheme(theme === "light" ? "dark" : "light");
     };
 
     return (
