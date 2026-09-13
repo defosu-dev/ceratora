@@ -166,7 +166,7 @@ export default function ImageToolsPage() {
                 id: crypto.randomUUID(),
                 selected: true,
             }));
-            setFiles((prev) => [...prev, ...newEntries]);
+            setFiles(newEntries);
             resetResults();
 
             if (extractedCount > 0) {
