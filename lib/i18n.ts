@@ -30,6 +30,8 @@ export interface Translations {
             of: string;
             deleteSelected: string;
             clearAll: string;
+            useForPreview: string;
+            removeFile: string;
         };
         format: {
             tab: string;
@@ -121,6 +123,8 @@ export const translations: Record<Locale, Translations> = {
                 of: "з",
                 deleteSelected: "Видалити вибрані",
                 clearAll: "Очистити все",
+                useForPreview: "Використати для прев'ю",
+                removeFile: "Видалити файл",
             },
             format: {
                 tab: "Формат",
@@ -212,6 +216,8 @@ export const translations: Record<Locale, Translations> = {
                 of: "of",
                 deleteSelected: "Delete selected",
                 clearAll: "Clear all",
+                useForPreview: "Use for preview",
+                removeFile: "Remove file",
             },
             format: {
                 tab: "Format",
@@ -303,6 +309,8 @@ export const translations: Record<Locale, Translations> = {
                 of: "из",
                 deleteSelected: "Удалить выбранные",
                 clearAll: "Очистить все",
+                useForPreview: "Использовать для предпросмотра",
+                removeFile: "Удалить файл",
             },
             format: {
                 tab: "Формат",

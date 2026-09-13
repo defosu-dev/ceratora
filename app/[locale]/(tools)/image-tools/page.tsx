@@ -25,6 +25,7 @@ import {
 } from "@/lib/imageProcessor";
 import {
     Download,
+    Eye,
     FolderArchive,
     Image as ImageIcon,
     Settings,
@@ -75,6 +76,7 @@ export default function ImageToolsPage() {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [previewFileId, setPreviewFileId] = useState<string | null>(null);
     const [previewScale, setPreviewScale] = useState<number | null>(null);
     const previewImgRef = useRef<HTMLImageElement | null>(null);
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
@@ -93,18 +95,19 @@ export default function ImageToolsPage() {
         return () => window.removeEventListener("keydown", onKey);
     }, [isPreviewModalOpen, selectedProcessedImage]);
 
-    const firstFileId = files[0]?.id;
+    const previewEntry =
+        files.find((f) => f.id === previewFileId) ?? files[0] ?? null;
+    const previewFile = previewEntry?.file ?? null;
     useEffect(() => {
-        const firstFile = files[0]?.file ?? null;
-        if (!firstFile) {
+        if (!previewFile) {
             setPreviewUrl(null);
             return;
         }
         setPreviewScale(null);
-        const url = URL.createObjectURL(firstFile);
+        const url = URL.createObjectURL(previewFile);
         setPreviewUrl(url);
         return () => URL.revokeObjectURL(url);
-    }, [firstFileId]);
+    }, [previewFile]);
 
     const updatePreviewScale = () => {
         const img = previewImgRef.current;
@@ -358,6 +361,12 @@ export default function ImageToolsPage() {
 
     const clearSelected = () => {
         setFiles((prev) => prev.filter((f) => !f.selected));
+        resetResults();
+    };
+
+    const removeFile = (id: string) => {
+        setFiles((prev) => prev.filter((f) => f.id !== id));
+        setPreviewFileId((prev) => (prev === id ? null : prev));
         resetResults();
     };
 
@@ -857,41 +866,104 @@ export default function ImageToolsPage() {
                                         </div>
                                     </div>
                                     <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2">
-                                        {files.map((file) => (
-                                            <div
-                                                key={file.id}
-                                                className={`flex items-center gap-2 p-2 rounded hover:bg-accent transition-colors cursor-pointer ${
-                                                    file.selected
-                                                        ? "bg-accent/50"
-                                                        : ""
-                                                }`}
-                                                onClick={() =>
-                                                    toggleFileSelection(file.id)
-                                                }
-                                            >
-                                                <Checkbox
-                                                    checked={file.selected}
-                                                    onCheckedChange={() =>
+                                        {files.map((file) => {
+                                            const isPreviewFile =
+                                                previewEntry?.id === file.id;
+                                            return (
+                                                <div
+                                                    key={file.id}
+                                                    className={`group flex items-center gap-2 p-2 rounded hover:bg-accent transition-colors cursor-pointer ${
+                                                        file.selected
+                                                            ? "bg-accent/50"
+                                                            : ""
+                                                    }`}
+                                                    onClick={() =>
                                                         toggleFileSelection(
                                                             file.id,
                                                         )
                                                     }
-                                                    onClick={(e) =>
-                                                        e.stopPropagation()
-                                                    }
-                                                />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-xs truncate">
-                                                        {file.file.name}
-                                                    </p>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        {formatFileSize(
-                                                            file.file.size,
-                                                        )}
-                                                    </p>
+                                                >
+                                                    <Checkbox
+                                                        checked={file.selected}
+                                                        onCheckedChange={() =>
+                                                            toggleFileSelection(
+                                                                file.id,
+                                                            )
+                                                        }
+                                                        onClick={(e) =>
+                                                            e.stopPropagation()
+                                                        }
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs truncate">
+                                                            {file.file.name}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {formatFileSize(
+                                                                file.file.size,
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    <div
+                                                        className={`flex items-center gap-1 transition-opacity ${
+                                                            isPreviewFile
+                                                                ? "opacity-100"
+                                                                : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                                                        }`}
+                                                    >
+                                                        <Button
+                                                            variant={
+                                                                isPreviewFile
+                                                                    ? "secondary"
+                                                                    : "ghost"
+                                                            }
+                                                            size="icon-xs"
+                                                            title={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .useForPreview
+                                                            }
+                                                            aria-label={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .useForPreview
+                                                            }
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setPreviewFileId(
+                                                                    file.id,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Eye className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon-xs"
+                                                            className="text-muted-foreground hover:text-destructive"
+                                                            title={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .removeFile
+                                                            }
+                                                            aria-label={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .removeFile
+                                                            }
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                removeFile(
+                                                                    file.id,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
