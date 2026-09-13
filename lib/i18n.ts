@@ -8,9 +8,27 @@ export interface Translations {
         home: string;
         imageTools: string;
         codeTools: string;
+        toggleSidebar: string;
     };
     footer: {
         developedBy: string;
+    };
+    home: {
+        title: string;
+        subtitle: string;
+        open: string;
+        soon: string;
+        imageToolsDesc: string;
+        codeToolsDesc: string;
+    };
+    workspace: {
+        sources: string;
+        canvas: string;
+        import: string;
+        dropToStart: string;
+        replace: string;
+        previewSource: string;
+        pickPreview: string;
     };
     imageTools: {
         title: string;
@@ -19,14 +37,18 @@ export interface Translations {
             title: string;
             description: string;
             selectedFiles: string;
+            noSelection: string;
+            reset: string;
         };
         upload: {
             title: string;
             description: string;
             dropzone: string;
+            dragActive: string;
             formats: string;
             selected: string;
             of: string;
+            selectAll: string;
             deleteSelected: string;
             clearAll: string;
             useForPreview: string;
@@ -41,6 +63,7 @@ export interface Translations {
             quality: string;
             recommended: string;
             maxSize: string;
+            noLimit: string;
             placeholder: string;
             autoDescription: string;
         };
@@ -61,6 +84,10 @@ export interface Translations {
             button: string;
             processing: string;
             cancel: string;
+            of: string;
+            progress: string;
+            addFiles: string;
+            selectFiles: string;
             image: string;
             images: string;
         };
@@ -68,11 +95,15 @@ export interface Translations {
             title: string;
             description: string;
             processed: string;
+            total: string;
             downloadAll: string;
             downloadZip: string;
             zipOnlyNotice: string;
             willAppear: string;
             download: string;
+            previewFile: string;
+            preview: string;
+            downloadFile: string;
         };
         toast: {
             success: string;
@@ -98,9 +129,29 @@ export const translations: Record<Locale, Translations> = {
             home: "Головна",
             imageTools: "Обробка зображень",
             codeTools: "Робота з кодом",
+            toggleSidebar: "Показати/сховати панель",
         },
         footer: {
             developedBy: "Розроблено",
+        },
+        home: {
+            title: "Інструменти",
+            subtitle: "Оберіть інструмент, щоб почати роботу",
+            open: "Відкрити",
+            soon: "Скоро",
+            imageToolsDesc:
+                "Конвертація, стиснення та редагування зображень",
+            codeToolsDesc: "Інструменти для роботи з кодом",
+        },
+        workspace: {
+            sources: "Джерела",
+            canvas: "Полотно",
+            import: "Імпорт",
+            dropToStart: "Перетягніть зображення або архів сюди",
+            replace: "Замінити файли",
+            previewSource: "Переглянути джерело",
+            pickPreview:
+                "Оберіть зображення у «Джерелах», щоб побачити заокруглення",
         },
         imageTools: {
             title: "Набір інструментів для роботи з зображеннями",
@@ -110,15 +161,19 @@ export const translations: Record<Locale, Translations> = {
                 title: "Налаштування",
                 description: "Налаштування для",
                 selectedFiles: "вибраних файлів",
+                noSelection: "Налаштуйте параметри та натисніть «Обробити»",
+                reset: "Скинути",
             },
             upload: {
                 title: "Завантаження",
                 description: "Перетягніть зображення або виберіть файли",
                 dropzone:
                     "Перетягніть файли або архів (ZIP, 7Z) сюди, вставте через Ctrl + V або натисніть для вибору",
+                dragActive: "Відпустіть, щоб додати файли",
                 formats: "PNG, JPG, WEBP, ZIP, 7Z до 100 файлів",
                 selected: "Вибрано:",
                 of: "з",
+                selectAll: "Вибрати всі",
                 deleteSelected: "Видалити вибрані",
                 clearAll: "Очистити все",
                 useForPreview: "Використати для прев'ю",
@@ -133,6 +188,7 @@ export const translations: Record<Locale, Translations> = {
                 quality: "Якість",
                 recommended: "Рекомендовано: 60-80% для оптимального балансу",
                 maxSize: "Максимальний розмір файлу (KB)",
+                noLimit: "Без ліміту",
                 placeholder: "Наприклад: 200",
                 autoDescription: "Буде автоматично підібрана найкраща якість",
             },
@@ -154,6 +210,10 @@ export const translations: Record<Locale, Translations> = {
                 button: "Обробити",
                 processing: "Обробка...",
                 cancel: "Скасувати",
+                of: "з",
+                progress: "Опрацьовано",
+                addFiles: "Додайте файли, щоб почати",
+                selectFiles: "Виберіть файли для обробки",
                 image: "зображення",
                 images: "зображень",
             },
@@ -161,12 +221,16 @@ export const translations: Record<Locale, Translations> = {
                 title: "Результати",
                 description: "Зображення з'являться тут після обробки",
                 processed: "Оброблено",
+                total: "Разом",
                 downloadAll: "Завантажити всі",
                 downloadZip: "Завантажити архівом (ZIP)",
                 zipOnlyNotice:
                     "Більше 10 зображень — завантаження доступне тільки архівом",
                 willAppear: "Результати з'являться тут",
                 download: "Завантажити",
+                previewFile: "Переглянути результат",
+                preview: "Прев'ю",
+                downloadFile: "Завантажити файл",
             },
             toast: {
                 success: "Зображення успішно оброблені!",
@@ -190,9 +254,27 @@ export const translations: Record<Locale, Translations> = {
             home: "Home",
             imageTools: "Image Processing",
             codeTools: "Code Tools",
+            toggleSidebar: "Toggle sidebar",
         },
         footer: {
             developedBy: "Developed by",
+        },
+        home: {
+            title: "Tools",
+            subtitle: "Pick a tool to get started",
+            open: "Open",
+            soon: "Soon",
+            imageToolsDesc: "Convert, compress and edit images",
+            codeToolsDesc: "Utilities for working with code",
+        },
+        workspace: {
+            sources: "Sources",
+            canvas: "Canvas",
+            import: "Import",
+            dropToStart: "Drop images or an archive here",
+            replace: "Replace files",
+            previewSource: "Preview source",
+            pickPreview: "Pick an image in Sources to preview the rounding",
         },
         imageTools: {
             title: "Image Processing Toolkit",
@@ -202,15 +284,19 @@ export const translations: Record<Locale, Translations> = {
                 title: "Settings",
                 description: "Settings for",
                 selectedFiles: "selected files",
+                noSelection: "Configure the options and click Process",
+                reset: "Reset",
             },
             upload: {
                 title: "Upload",
                 description: "Drag and drop images or select files",
                 dropzone:
                     "Drop files or archive (ZIP, 7Z) here, paste with Ctrl + V or click to select",
+                dragActive: "Drop to add files",
                 formats: "PNG, JPG, WEBP, ZIP, 7Z up to 100 files",
                 selected: "Selected:",
                 of: "of",
+                selectAll: "Select all",
                 deleteSelected: "Delete selected",
                 clearAll: "Clear all",
                 useForPreview: "Use for preview",
@@ -225,6 +311,7 @@ export const translations: Record<Locale, Translations> = {
                 quality: "Quality",
                 recommended: "Recommended: 60-80% for optimal balance",
                 maxSize: "Maximum file size (KB)",
+                noLimit: "No limit",
                 placeholder: "Example: 200",
                 autoDescription: "Best quality will be automatically selected",
             },
@@ -246,6 +333,10 @@ export const translations: Record<Locale, Translations> = {
                 button: "Process",
                 processing: "Processing...",
                 cancel: "Cancel",
+                of: "of",
+                progress: "Processed",
+                addFiles: "Add files to get started",
+                selectFiles: "Select files to process",
                 image: "image",
                 images: "images",
             },
@@ -253,12 +344,16 @@ export const translations: Record<Locale, Translations> = {
                 title: "Results",
                 description: "Images will appear here after processing",
                 processed: "Processed",
+                total: "Total",
                 downloadAll: "Download all",
                 downloadZip: "Download as ZIP",
                 zipOnlyNotice:
                     "More than 10 images — download is available only as archive",
                 willAppear: "Results will appear here",
                 download: "Download",
+                previewFile: "Preview result",
+                preview: "Preview",
+                downloadFile: "Download file",
             },
             toast: {
                 success: "Images processed successfully!",
@@ -282,9 +377,29 @@ export const translations: Record<Locale, Translations> = {
             home: "Главная",
             imageTools: "Обработка изображений",
             codeTools: "Работа с кодом",
+            toggleSidebar: "Показать/скрыть панель",
         },
         footer: {
             developedBy: "Разработано",
+        },
+        home: {
+            title: "Инструменты",
+            subtitle: "Выберите инструмент, чтобы начать",
+            open: "Открыть",
+            soon: "Скоро",
+            imageToolsDesc:
+                "Конвертация, сжатие и редактирование изображений",
+            codeToolsDesc: "Инструменты для работы с кодом",
+        },
+        workspace: {
+            sources: "Источники",
+            canvas: "Холст",
+            import: "Импорт",
+            dropToStart: "Перетащите изображения или архив сюда",
+            replace: "Заменить файлы",
+            previewSource: "Просмотреть источник",
+            pickPreview:
+                "Выберите изображение в «Источниках», чтобы увидеть закругление",
         },
         imageTools: {
             title: "Набор инструментов для работы с изображениями",
@@ -294,15 +409,19 @@ export const translations: Record<Locale, Translations> = {
                 title: "Настройки",
                 description: "Настройки для",
                 selectedFiles: "выбранных файлов",
+                noSelection: "Настройте параметры и нажмите «Обработать»",
+                reset: "Сбросить",
             },
             upload: {
                 title: "Загрузка",
                 description: "Перетащите изображения или выберите файлы",
                 dropzone:
                     "Перетащите файлы или архив (ZIP, 7Z) сюда, вставьте через Ctrl + V или нажмите для выбора",
+                dragActive: "Отпустите, чтобы добавить файлы",
                 formats: "PNG, JPG, WEBP, ZIP, 7Z до 100 файлов",
                 selected: "Выбрано:",
                 of: "из",
+                selectAll: "Выбрать все",
                 deleteSelected: "Удалить выбранные",
                 clearAll: "Очистить все",
                 useForPreview: "Использовать для предпросмотра",
@@ -317,6 +436,7 @@ export const translations: Record<Locale, Translations> = {
                 quality: "Качество",
                 recommended: "Рекомендуется: 60-80% для оптимального баланса",
                 maxSize: "Максимальный размер файла (KB)",
+                noLimit: "Без лимита",
                 placeholder: "Например: 200",
                 autoDescription:
                     "Будет автоматически подобрано лучшее качество",
@@ -339,6 +459,10 @@ export const translations: Record<Locale, Translations> = {
                 button: "Обработать",
                 processing: "Обработка...",
                 cancel: "Отменить",
+                of: "из",
+                progress: "Обработано",
+                addFiles: "Добавьте файлы, чтобы начать",
+                selectFiles: "Выберите файлы для обработки",
                 image: "изображение",
                 images: "изображений",
             },
@@ -346,12 +470,16 @@ export const translations: Record<Locale, Translations> = {
                 title: "Результаты",
                 description: "Изображения появятся здесь после обработки",
                 processed: "Обработано",
+                total: "Всего",
                 downloadAll: "Скачать все",
                 downloadZip: "Скачать архивом (ZIP)",
                 zipOnlyNotice:
                     "Более 10 изображений — скачивание доступно только архивом",
                 willAppear: "Результаты появятся здесь",
                 download: "Скачать",
+                previewFile: "Просмотреть результат",
+                preview: "Просмотр",
+                downloadFile: "Скачать файл",
             },
             toast: {
                 success: "Изображения успешно обработаны!",

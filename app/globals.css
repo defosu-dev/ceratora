@@ -122,4 +122,24 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Tailwind v4 no longer applies the pointer cursor to buttons by default. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="slider"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  label[for] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"],
+  [data-disabled] {
+    cursor: not-allowed;
+  }
 }
