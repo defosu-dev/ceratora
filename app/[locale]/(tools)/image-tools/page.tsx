@@ -75,6 +75,7 @@ export default function ImageToolsPage() {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [previewScale, setPreviewScale] = useState<number | null>(null);
     const previewImgRef = useRef<HTMLImageElement | null>(null);
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
     const [selectedProcessedImage, setSelectedProcessedImage] =
@@ -99,16 +100,21 @@ export default function ImageToolsPage() {
             setPreviewUrl(null);
             return;
         }
+        setPreviewScale(null);
         const url = URL.createObjectURL(firstFile);
         setPreviewUrl(url);
         return () => URL.revokeObjectURL(url);
     }, [firstFileId]);
 
+    const updatePreviewScale = () => {
+        const img = previewImgRef.current;
+        if (!img || !img.naturalWidth || !img.clientWidth) return;
+        setPreviewScale(img.clientWidth / img.naturalWidth);
+    };
+
     const getScaledRadius = (): string => {
         if (activeRadius === 9999) return "9999px";
-        const img = previewImgRef.current;
-        if (!img || !img.naturalWidth) return `${activeRadius}px`;
-        const scale = img.clientWidth / img.naturalWidth;
+        const scale = previewScale ?? 1;
         return `${Math.round(activeRadius * scale)}px`;
     };
 
@@ -708,6 +714,7 @@ export default function ImageToolsPage() {
                                                         borderRadius:
                                                             getScaledRadius(),
                                                     }}
+                                                    onLoad={updatePreviewScale}
                                                     onClick={() =>
                                                         setIsPreviewModalOpen(
                                                             true,
