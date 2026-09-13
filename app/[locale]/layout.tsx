@@ -4,6 +4,7 @@ import "../globals.css";
 import { AppProvider } from "./_components/AppProvider";
 import Header from "./_components/Header";
 import Footer from "./_components/Footer";
+import { Locale } from "@/lib/i18n";
 
 const geistSans = Geist({
     variable: "--font-geist-sans",
@@ -52,7 +53,7 @@ export default async function RootLayout({
                 className={`${geistSans.variable} ${geistMono.variable} antialiased flex flex-col min-h-screen items-center font-sans bg-white dark:bg-black`}
                 suppressHydrationWarning
             >
-                <AppProvider>
+                <AppProvider initialLocale={locale as Locale}>
                     <Header />
                     {children}
                     <Footer />

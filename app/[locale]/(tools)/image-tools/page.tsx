@@ -18,12 +18,15 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTranslation } from "@/lib/i18n";
 import {
+    ArchiveUtils,
     ImageProcessingOptions,
     ImageProcessor,
     ProcessedImage,
 } from "@/lib/imageProcessor";
 import {
     Download,
+    Eye,
+    FolderArchive,
     Image as ImageIcon,
     Settings,
     Trash2,
@@ -58,6 +61,7 @@ export default function ImageToolsPage() {
         [],
     );
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isCreatingZip, setIsCreatingZip] = useState(false);
     const [progress, setProgress] = useState(0);
     const [qualityMode, setQualityMode] = useState<"manual" | "auto">("manual");
     const [options, setOptions] = useState<ImageProcessingOptions>({
@@ -72,6 +76,8 @@ export default function ImageToolsPage() {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [previewFileId, setPreviewFileId] = useState<string | null>(null);
+    const [previewScale, setPreviewScale] = useState<number | null>(null);
     const previewImgRef = useRef<HTMLImageElement | null>(null);
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
     const [selectedProcessedImage, setSelectedProcessedImage] =
@@ -88,23 +94,30 @@ export default function ImageToolsPage() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [isPreviewModalOpen, selectedProcessedImage]);
-    const firstFileId = files[0]?.id;
+
+    const previewEntry =
+        files.find((f) => f.id === previewFileId) ?? files[0] ?? null;
+    const previewFile = previewEntry?.file ?? null;
     useEffect(() => {
-        const firstFile = files[0]?.file ?? null;
-        if (!firstFile) {
+        if (!previewFile) {
             setPreviewUrl(null);
             return;
         }
-        const url = URL.createObjectURL(firstFile);
+        setPreviewScale(null);
+        const url = URL.createObjectURL(previewFile);
         setPreviewUrl(url);
         return () => URL.revokeObjectURL(url);
-    }, [firstFileId]);
+    }, [previewFile]);
+
+    const updatePreviewScale = () => {
+        const img = previewImgRef.current;
+        if (!img || !img.naturalWidth || !img.clientWidth) return;
+        setPreviewScale(Math.min(1, img.clientWidth / img.naturalWidth));
+    };
 
     const getScaledRadius = (): string => {
         if (activeRadius === 9999) return "9999px";
-        const img = previewImgRef.current;
-        if (!img || !img.naturalWidth) return `${activeRadius}px`;
-        const scale = img.clientWidth / img.naturalWidth;
+        const scale = previewScale ?? 1;
         return `${Math.round(activeRadius * scale)}px`;
     };
 
@@ -113,30 +126,143 @@ export default function ImageToolsPage() {
         setProgress(0);
     };
 
+    const addFiles = useCallback(
+        async (incomingFiles: File[]) => {
+            const rawImages: File[] = [];
+            const archiveFiles: File[] = [];
+
+            for (const file of incomingFiles) {
+                if (ArchiveUtils.isArchive(file)) {
+                    archiveFiles.push(file);
+                } else if (ArchiveUtils.isImageFile(file.name, file.type)) {
+                    rawImages.push(file);
+                }
+            }
+
+            let extractedCount = 0;
+            if (archiveFiles.length > 0) {
+                const toastId = toast.loading(t.imageTools.toast.unzipping);
+                try {
+                    for (const arc of archiveFiles) {
+                        const imagesFromArchive =
+                            await ArchiveUtils.extractImagesFromArchive(arc);
+                        if (imagesFromArchive.length > 0) {
+                            extractedCount += imagesFromArchive.length;
+                            rawImages.push(...imagesFromArchive);
+                        }
+                    }
+                    toast.dismiss(toastId);
+                    if (extractedCount === 0 && rawImages.length === 0) {
+                        toast.warn(t.imageTools.toast.noImagesInZip);
+                        return;
+                    }
+                } catch {
+                    toast.dismiss(toastId);
+                    toast.error(t.imageTools.toast.error);
+                }
+            }
+
+            if (rawImages.length === 0) return;
+
+            const newEntries = rawImages.map((file) => ({
+                file,
+                id: crypto.randomUUID(),
+                selected: true,
+            }));
+            setFiles(newEntries);
+            resetResults();
+
+            if (extractedCount > 0) {
+                toast.success(
+                    `${t.imageTools.toast.unzippedCount} ${extractedCount}`,
+                );
+            } else if (rawImages.length === 1) {
+                toast.success(t.imageTools.toast.uploadedSingle);
+            } else {
+                toast.success(
+                    `${t.imageTools.toast.uploadedCount} ${rawImages.length}`,
+                );
+            }
+        },
+        [t],
+    );
+
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files) return;
-        const newFiles = Array.from(e.target.files).map((file) => ({
-            file,
-            id: crypto.randomUUID(),
-            selected: true,
-        }));
-        setFiles(newFiles);
-        resetResults();
+        const incoming = Array.from(e.target.files);
+        addFiles(incoming);
+        e.target.value = "";
     };
 
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        if (!e.dataTransfer.files) return;
-        const newFiles = Array.from(e.dataTransfer.files).map((file) => ({
-            file,
-            id: crypto.randomUUID(),
-            selected: true,
-        }));
-        setFiles(newFiles);
-        resetResults();
-    }, []);
+    const handleDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            if (!e.dataTransfer.files) return;
+            const incoming = Array.from(e.dataTransfer.files);
+            addFiles(incoming);
+        },
+        [addFiles],
+    );
 
     const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+    useEffect(() => {
+        const handlePaste = (e: ClipboardEvent) => {
+            const clipboardData = e.clipboardData;
+            if (!clipboardData) return;
+
+            const candidateFiles: File[] = [];
+
+            // 1. Extract all files from clipboardData.items
+            if (clipboardData.items && clipboardData.items.length > 0) {
+                for (let i = 0; i < clipboardData.items.length; i++) {
+                    const item = clipboardData.items[i];
+                    if (item.kind === "file") {
+                        const file = item.getAsFile();
+                        if (file) {
+                            candidateFiles.push(file);
+                        }
+                    }
+                }
+            }
+
+            // 2. Extract all files from clipboardData.files
+            if (clipboardData.files && clipboardData.files.length > 0) {
+                for (let i = 0; i < clipboardData.files.length; i++) {
+                    const file = clipboardData.files[i];
+                    if (file) {
+                        candidateFiles.push(file);
+                    }
+                }
+            }
+
+            // 3. Filter valid image & archive files and deduplicate
+            const seen = new Set<string>();
+            const validFiles: File[] = [];
+
+            for (const file of candidateFiles) {
+                const isValid =
+                    ArchiveUtils.isImageFile(file.name, file.type) ||
+                    ArchiveUtils.isArchive(file);
+
+                if (isValid) {
+                    const key = `${file.name}_${file.size}_${file.lastModified}`;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        validFiles.push(file);
+                    }
+                }
+            }
+
+            if (validFiles.length > 0) {
+                e.preventDefault();
+                addFiles(validFiles);
+            }
+        };
+
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, [addFiles]);
 
     const toggleFileSelection = (id: string) => {
         setFiles((prev) =>
@@ -212,6 +338,22 @@ export default function ImageToolsPage() {
         }
     };
 
+    const downloadZip = async () => {
+        if (processedImages.length === 0) return;
+        setIsCreatingZip(true);
+        try {
+            await ArchiveUtils.downloadZip(
+                processedImages,
+                `ceratora_processed_${Date.now()}.zip`,
+            );
+            toast.success(t.imageTools.toast.zipDownloadSuccess);
+        } catch {
+            toast.error(t.imageTools.toast.zipDownloadError);
+        } finally {
+            setIsCreatingZip(false);
+        }
+    };
+
     const clearAll = () => {
         setFiles([]);
         resetResults();
@@ -219,6 +361,12 @@ export default function ImageToolsPage() {
 
     const clearSelected = () => {
         setFiles((prev) => prev.filter((f) => !f.selected));
+        resetResults();
+    };
+
+    const removeFile = (id: string) => {
+        setFiles((prev) => prev.filter((f) => f.id !== id));
+        setPreviewFileId((prev) => (prev === id ? null : prev));
         resetResults();
     };
 
@@ -311,11 +459,21 @@ export default function ImageToolsPage() {
                                         </Label>
                                         <RadioGroup
                                             value={qualityMode}
-                                            onValueChange={(v) =>
-                                                setQualityMode(
-                                                    v as "manual" | "auto",
-                                                )
-                                            }
+                                            onValueChange={(v) => {
+                                                const mode = v as
+                                                    | "manual"
+                                                    | "auto";
+                                                setQualityMode(mode);
+                                                if (
+                                                    mode === "auto" &&
+                                                    !options.maxSizeKB
+                                                ) {
+                                                    setOptions({
+                                                        ...options,
+                                                        maxSizeKB: 35,
+                                                    });
+                                                }
+                                            }}
                                         >
                                             <div className="flex items-center space-x-2">
                                                 <RadioGroupItem
@@ -324,7 +482,7 @@ export default function ImageToolsPage() {
                                                 />
                                                 <Label
                                                     htmlFor="manual"
-                                                    className="font-normal"
+                                                    className="font-normal cursor-pointer"
                                                 >
                                                     {t.imageTools.format.manual}
                                                 </Label>
@@ -336,7 +494,7 @@ export default function ImageToolsPage() {
                                                 />
                                                 <Label
                                                     htmlFor="auto"
-                                                    className="font-normal"
+                                                    className="font-normal cursor-pointer"
                                                 >
                                                     {t.imageTools.format.auto}
                                                 </Label>
@@ -346,12 +504,19 @@ export default function ImageToolsPage() {
 
                                     {qualityMode === "manual" ? (
                                         <div className="space-y-2">
-                                            <Label>
-                                                {t.imageTools.format.quality} (
-                                                {options.quality}%)
-                                            </Label>
+                                            <div className="flex justify-between text-sm">
+                                                <Label>
+                                                    {
+                                                        t.imageTools.format
+                                                            .quality
+                                                    }
+                                                </Label>
+                                                <span className="font-mono font-medium">
+                                                    {options.quality}%
+                                                </span>
+                                            </div>
                                             <Slider
-                                                value={[options.quality || 80]}
+                                                value={[options.quality ?? 80]}
                                                 onValueChange={([value]) =>
                                                     setOptions({
                                                         ...options,
@@ -371,16 +536,17 @@ export default function ImageToolsPage() {
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
-                                            <Label>
+                                            <Label htmlFor="maxSizeKB">
                                                 {t.imageTools.format.maxSize}
                                             </Label>
                                             <Input
+                                                id="maxSizeKB"
                                                 type="number"
                                                 placeholder={
                                                     t.imageTools.format
                                                         .placeholder
                                                 }
-                                                value={options.maxSizeKB || ""}
+                                                value={options.maxSizeKB ?? ""}
                                                 onChange={(e) =>
                                                     setOptions({
                                                         ...options,
@@ -393,6 +559,7 @@ export default function ImageToolsPage() {
                                                             : undefined,
                                                     })
                                                 }
+                                                min={1}
                                             />
                                             <p className="text-xs text-muted-foreground">
                                                 {
@@ -408,41 +575,59 @@ export default function ImageToolsPage() {
                                     value="size"
                                     className="space-y-4 mt-4"
                                 >
-                                    <div className="space-y-2">
-                                        <Label>
-                                            {t.imageTools.size.maxWidth}
-                                        </Label>
-                                        <Input
-                                            type="number"
-                                            placeholder={t.imageTools.size.auto}
-                                            value={options.maxWidth || ""}
-                                            onChange={(e) =>
-                                                setOptions({
-                                                    ...options,
-                                                    maxWidth: e.target.value
-                                                        ? Number(e.target.value)
-                                                        : undefined,
-                                                })
-                                            }
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label>
-                                            {t.imageTools.size.maxHeight}
-                                        </Label>
-                                        <Input
-                                            type="number"
-                                            placeholder={t.imageTools.size.auto}
-                                            value={options.maxHeight || ""}
-                                            onChange={(e) =>
-                                                setOptions({
-                                                    ...options,
-                                                    maxHeight: e.target.value
-                                                        ? Number(e.target.value)
-                                                        : undefined,
-                                                })
-                                            }
-                                        />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="maxWidth">
+                                                {t.imageTools.size.maxWidth}
+                                            </Label>
+                                            <Input
+                                                id="maxWidth"
+                                                type="number"
+                                                placeholder={
+                                                    t.imageTools.size.auto
+                                                }
+                                                value={options.maxWidth ?? ""}
+                                                onChange={(e) =>
+                                                    setOptions({
+                                                        ...options,
+                                                        maxWidth: e.target.value
+                                                            ? Number(
+                                                                  e.target
+                                                                      .value,
+                                                              )
+                                                            : undefined,
+                                                    })
+                                                }
+                                                min={1}
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label htmlFor="maxHeight">
+                                                {t.imageTools.size.maxHeight}
+                                            </Label>
+                                            <Input
+                                                id="maxHeight"
+                                                type="number"
+                                                placeholder={
+                                                    t.imageTools.size.auto
+                                                }
+                                                value={options.maxHeight ?? ""}
+                                                onChange={(e) =>
+                                                    setOptions({
+                                                        ...options,
+                                                        maxHeight: e.target
+                                                            .value
+                                                            ? Number(
+                                                                  e.target
+                                                                      .value,
+                                                              )
+                                                            : undefined,
+                                                    })
+                                                }
+                                                min={1}
+                                            />
+                                        </div>
                                     </div>
                                 </TabsContent>
 
@@ -455,7 +640,7 @@ export default function ImageToolsPage() {
                                             {t.imageTools.style.cornerRadius}
                                         </Label>
 
-                                        <div className="flex flex-wrap gap-2">
+                                        <div className="grid grid-cols-6 gap-1">
                                             {CORNER_RADIUS_PRESETS.map(
                                                 (preset) => (
                                                     <Button
@@ -467,6 +652,7 @@ export default function ImageToolsPage() {
                                                                 : "outline"
                                                         }
                                                         size="sm"
+                                                        className="text-xs px-1"
                                                         onClick={() =>
                                                             setOptions({
                                                                 ...options,
@@ -481,10 +667,11 @@ export default function ImageToolsPage() {
                                             )}
                                         </div>
 
-                                        <div className="flex gap-2">
+                                        <div className="flex items-center gap-3">
                                             <Input
                                                 type="number"
-                                                min="0"
+                                                min={0}
+                                                max={500}
                                                 value={
                                                     activeRadius === 9999
                                                         ? ""
@@ -541,11 +728,14 @@ export default function ImageToolsPage() {
                                                     ref={previewImgRef}
                                                     src={previewUrl}
                                                     alt="preview"
-                                                    className="w-full cursor-zoom-in transition-opacity hover:opacity-90"
+                                                    className="block max-w-full self-start cursor-zoom-in transition-opacity hover:opacity-90"
                                                     style={{
                                                         borderRadius:
                                                             getScaledRadius(),
+                                                        boxShadow:
+                                                            "0 0 0 1px #e5e5e5",
                                                     }}
+                                                    onLoad={updatePreviewScale}
                                                     onClick={() =>
                                                         setIsPreviewModalOpen(
                                                             true,
@@ -634,7 +824,7 @@ export default function ImageToolsPage() {
                                     id="fileInput"
                                     type="file"
                                     multiple
-                                    accept="image/*"
+                                    accept="image/*,.zip,.7z,.rar,.tar,.tar.gz,.tgz,.cbz,application/zip,application/x-zip-compressed,application/x-7z-compressed,application/x-rar-compressed"
                                     onChange={handleFileSelect}
                                     className="hidden"
                                 />
@@ -686,41 +876,104 @@ export default function ImageToolsPage() {
                                         </div>
                                     </div>
                                     <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-2">
-                                        {files.map((file) => (
-                                            <div
-                                                key={file.id}
-                                                className={`flex items-center gap-2 p-2 rounded hover:bg-accent transition-colors cursor-pointer ${
-                                                    file.selected
-                                                        ? "bg-accent/50"
-                                                        : ""
-                                                }`}
-                                                onClick={() =>
-                                                    toggleFileSelection(file.id)
-                                                }
-                                            >
-                                                <Checkbox
-                                                    checked={file.selected}
-                                                    onCheckedChange={() =>
+                                        {files.map((file) => {
+                                            const isPreviewFile =
+                                                previewEntry?.id === file.id;
+                                            return (
+                                                <div
+                                                    key={file.id}
+                                                    className={`group flex items-center gap-2 p-2 rounded hover:bg-accent transition-colors cursor-pointer ${
+                                                        file.selected
+                                                            ? "bg-accent/50"
+                                                            : ""
+                                                    }`}
+                                                    onClick={() =>
                                                         toggleFileSelection(
                                                             file.id,
                                                         )
                                                     }
-                                                    onClick={(e) =>
-                                                        e.stopPropagation()
-                                                    }
-                                                />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-xs truncate">
-                                                        {file.file.name}
-                                                    </p>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        {formatFileSize(
-                                                            file.file.size,
-                                                        )}
-                                                    </p>
+                                                >
+                                                    <Checkbox
+                                                        checked={file.selected}
+                                                        onCheckedChange={() =>
+                                                            toggleFileSelection(
+                                                                file.id,
+                                                            )
+                                                        }
+                                                        onClick={(e) =>
+                                                            e.stopPropagation()
+                                                        }
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs truncate">
+                                                            {file.file.name}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {formatFileSize(
+                                                                file.file.size,
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    <div
+                                                        className={`flex items-center gap-1 transition-opacity ${
+                                                            isPreviewFile
+                                                                ? "opacity-100"
+                                                                : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                                                        }`}
+                                                    >
+                                                        <Button
+                                                            variant={
+                                                                isPreviewFile
+                                                                    ? "secondary"
+                                                                    : "ghost"
+                                                            }
+                                                            size="icon-xs"
+                                                            title={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .useForPreview
+                                                            }
+                                                            aria-label={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .useForPreview
+                                                            }
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setPreviewFileId(
+                                                                    file.id,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Eye className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon-xs"
+                                                            className="text-muted-foreground hover:text-destructive"
+                                                            title={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .removeFile
+                                                            }
+                                                            aria-label={
+                                                                t.imageTools
+                                                                    .upload
+                                                                    .removeFile
+                                                            }
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                removeFile(
+                                                                    file.id,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -729,7 +982,7 @@ export default function ImageToolsPage() {
 
                     <Card>
                         <CardHeader>
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                 <div>
                                     <CardTitle>
                                         {t.imageTools.results.title}
@@ -741,10 +994,61 @@ export default function ImageToolsPage() {
                                     </CardDescription>
                                 </div>
                                 {processedImages.length > 0 && (
-                                    <Button onClick={downloadAll} size="sm">
-                                        <Download className="h-4 w-4 mr-2" />
-                                        {t.imageTools.results.downloadAll}
-                                    </Button>
+                                    <div className="flex flex-col items-end gap-1">
+                                        {processedImages.length > 10 ? (
+                                            <>
+                                                <Button
+                                                    onClick={downloadZip}
+                                                    disabled={isCreatingZip}
+                                                    size="sm"
+                                                >
+                                                    <FolderArchive className="h-4 w-4 mr-2" />
+                                                    {isCreatingZip
+                                                        ? "..."
+                                                        : t.imageTools.results
+                                                              .downloadZip}
+                                                </Button>
+                                                <span className="text-[11px] text-muted-foreground text-right">
+                                                    {
+                                                        t.imageTools.results
+                                                            .zipOnlyNotice
+                                                    }
+                                                </span>
+                                            </>
+                                        ) : processedImages.length > 1 ? (
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    onClick={downloadAll}
+                                                    size="sm"
+                                                >
+                                                    <Download className="h-4 w-4 mr-2" />
+                                                    {
+                                                        t.imageTools.results
+                                                            .downloadAll
+                                                    }
+                                                </Button>
+                                                <Button
+                                                    onClick={downloadZip}
+                                                    disabled={isCreatingZip}
+                                                    size="sm"
+                                                >
+                                                    <FolderArchive className="h-4 w-4 mr-2" />
+                                                    {isCreatingZip
+                                                        ? "..."
+                                                        : "ZIP"}
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <Button
+                                                onClick={downloadAll}
+                                                size="sm"
+                                            >
+                                                <Download className="h-4 w-4 mr-2" />
+                                                {t.imageTools.results.download}
+                                            </Button>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </CardHeader>
@@ -885,7 +1189,6 @@ export default function ImageToolsPage() {
                                               const img = previewImgRef.current;
                                               if (!img || !img.naturalWidth)
                                                   return `${activeRadius}px`;
-                                              // В модалці img обмежений 90vw/90vh — беремо менший з двох варіантів масштабу
                                               const scaleW =
                                                   (window.innerWidth * 0.9) /
                                                   img.naturalWidth;

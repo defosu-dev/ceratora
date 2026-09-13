@@ -1,6 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, {
+    createContext,
+    useContext,
+    useState,
+    useEffect,
+    ReactNode,
+} from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Locale, LOCALES } from "@/lib/i18n";
 import { ToastContainer } from "react-toastify";
@@ -15,30 +21,50 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-function getInitialTheme(): "light" | "dark" {
-    if (typeof window === "undefined") return "light";
-    try {
-        const saved = localStorage.getItem("theme") as "light" | "dark" | null;
-        if (saved) return saved;
-    } catch {
-        // ignore
-    }
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
-}
-
-export const AppProvider = ({ children }: { children: ReactNode }) => {
+export const AppProvider = ({
+    children,
+    initialLocale,
+}: {
+    children: ReactNode;
+    initialLocale?: Locale;
+}) => {
     const pathname = usePathname();
     const router = useRouter();
 
-    const segment = pathname.split("/")[1];
+    const segment = pathname ? pathname.split("/")[1] : undefined;
     const locale: Locale =
-        segment && LOCALES.includes(segment as Locale)
-            ? (segment as Locale)
-            : "en";
+        initialLocale && LOCALES.includes(initialLocale)
+            ? initialLocale
+            : segment && LOCALES.includes(segment as Locale)
+              ? (segment as Locale)
+              : "en";
 
-    const [theme, setThemeState] = useState<"light" | "dark">(getInitialTheme);
+    const [theme, setThemeState] = useState<"light" | "dark">("light");
+
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem("theme") as
+                | "light"
+                | "dark"
+                | null;
+            if (saved) {
+                setThemeState(saved);
+                document.documentElement.classList.toggle(
+                    "dark",
+                    saved === "dark",
+                );
+            } else {
+                const prefersDark = window.matchMedia(
+                    "(prefers-color-scheme: dark)",
+                ).matches;
+                const next = prefersDark ? "dark" : "light";
+                setThemeState(next);
+                document.documentElement.classList.toggle("dark", prefersDark);
+            }
+        } catch {
+            // ignore
+        }
+    }, []);
 
     const setLocale = (newLocale: Locale) => {
         const rest = pathname.replace(/^\/[a-z]{2}/, "") || "/";
