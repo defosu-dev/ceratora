@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, Code2, Image as ImageIcon } from "lucide-react";
 import { useAppProvider } from "./_components/AppProvider";
 import { useTranslation } from "@/lib/i18n";
@@ -29,11 +30,22 @@ export default function Home() {
     return (
         <div className="h-full overflow-y-auto">
             <div className="mx-auto w-full max-w-5xl px-6 py-10">
-                <div className="mb-8 flex flex-col gap-2">
-                    <h1 className="text-3xl font-bold tracking-tight">
-                        {t.home.title}
-                    </h1>
-                    <p className="text-muted-foreground">{t.home.subtitle}</p>
+                <div className="mb-8 flex items-center gap-4">
+                    <Image
+                        src="/logo.svg"
+                        unoptimized
+                        alt="Ceratora"
+                        width={52}
+                        height={52}
+                        className="rounded-2xl shadow-sm shrink-0"
+                        priority
+                    />
+                    <div className="flex flex-col gap-1">
+                        <h1 className="text-3xl font-bold tracking-tight">
+                            {t.home.title}
+                        </h1>
+                        <p className="text-muted-foreground">{t.home.subtitle}</p>
+                    </div>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">

@@ -1,6 +1,5 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -14,16 +13,29 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Slider } from "@/components/ui/slider";
+import {
+    type BgRemovalStatus,
+    BackgroundRemover,
+} from "@/lib/backgroundRemover";
 import { useTranslation } from "@/lib/i18n";
 import {
     ArchiveUtils,
+    type CropRect,
+    CropUtils,
     ImageProcessingOptions,
     ImageProcessor,
+    type PaintStroke,
+    type PaintTool,
     ProcessedImage,
 } from "@/lib/imageProcessor";
 import { cn } from "@/lib/utils";
 import {
+    Brush,
     Circle,
+    Eraser,
+    HardDrive,
+    Loader2,
+    Crop,
     Download,
     Eye,
     FileImage,
@@ -34,10 +46,15 @@ import {
     MoreHorizontal,
     Plus,
     RotateCcw,
+    ShieldCheck,
     SlidersHorizontal,
     Sparkles,
     Trash2,
+    Redo2,
+    Undo2,
     X,
+    ZoomIn,
+    ZoomOut,
     type LucideIcon,
 } from "lucide-react";
 import {
@@ -46,9 +63,14 @@ import {
     useEffect,
     useRef,
     useState,
+    useSyncExternalStore,
 } from "react";
 import { toast } from "react-toastify";
 import { useAppProvider } from "../../_components/AppProvider";
+import { CropEditor } from "./_components/CropEditor";
+import { PaintLayer } from "./_components/PaintLayer";
+import { ToolButton } from "./_components/ToolButton";
+import { useZoomViewport } from "./_hooks/useZoomViewport";
 
 interface FileWithSelection {
     file: File;
@@ -66,11 +88,41 @@ const CORNER_RADIUS_PRESETS = [
     { label: "Full", value: 9999 },
 ] as const;
 
+type CropAspect =
+    | "free"
+    | "original"
+    | "1:1"
+    | "4:3"
+    | "3:4"
+    | "16:9"
+    | "9:16"
+    | "3:2";
+
+const CROP_ASPECT_PRESETS: { value: CropAspect; ratio: number | null }[] = [
+    { value: "free", ratio: null },
+    { value: "original", ratio: null },
+    { value: "1:1", ratio: 1 },
+    { value: "4:3", ratio: 4 / 3 },
+    { value: "3:4", ratio: 3 / 4 },
+    { value: "16:9", ratio: 16 / 9 },
+    { value: "9:16", ratio: 9 / 16 },
+    { value: "3:2", ratio: 3 / 2 },
+];
+
+/** View zoom (1 = fit). Only changes how big the image looks. */
+const ZOOM_MIN = 0.25;
+const CANVAS_ZOOM_MAX = 4;
+/** Previews may be tiny (icons), so they can be magnified further. */
+const MODAL_ZOOM_MAX = 16;
+const ZOOM_STEP = 1.25;
+
+const BG_IDLE_STATUS: BgRemovalStatus = { state: "idle", progress: 0 };
+
 const DEFAULT_OPTIONS: ImageProcessingOptions = {
     format: "webp",
     quality: 80,
     cornerRadius: 0,
-    maxSizeKB: undefined,
+    maxSizeKB: 35,
     maxWidth: undefined,
     maxHeight: undefined,
 };
@@ -122,6 +174,85 @@ function calculateOutputSize(
     return { width: Math.round(width), height: Math.round(height) };
 }
 
+/** Positions the full source image inside a frame so only the crop shows. */
+function getCropImageStyle(crop: CropRect): React.CSSProperties {
+    return {
+        width: `${100 / crop.width}%`,
+        height: `${100 / crop.height}%`,
+        left: `${(-crop.x / crop.width) * 100}%`,
+        top: `${(-crop.y / crop.height) * 100}%`,
+    };
+}
+
+/** Tracks an element's rendered width (callback ref + ResizeObserver). */
+function useElementWidth<T extends HTMLElement>() {
+    const [element, setElement] = useState<T | null>(null);
+    const [width, setWidth] = useState(0);
+
+    useEffect(() => {
+        if (!element) return;
+        const observer = new ResizeObserver(([entry]) =>
+            setWidth(entry.contentRect.width),
+        );
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [element]);
+
+    return [setElement, width] as const;
+}
+
+/** − / percentage (click = fit) / + buttons for a zoomable view. */
+function ZoomControls({
+    zoom,
+    max,
+    onZoom,
+    labels,
+}: {
+    zoom: number;
+    max: number;
+    onZoom: (zoom: number) => void;
+    labels: { zoomIn: string; zoomOut: string; zoomFit: string };
+}) {
+    const buttonClass =
+        "text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+    return (
+        <>
+            <button
+                type="button"
+                onClick={() => onZoom(zoom / ZOOM_STEP)}
+                disabled={zoom <= ZOOM_MIN}
+                aria-label={labels.zoomOut}
+                title={labels.zoomOut}
+                className={buttonClass}
+            >
+                <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <button
+                type="button"
+                onClick={() => onZoom(1)}
+                aria-label={labels.zoomFit}
+                title={labels.zoomFit}
+                className={cn(
+                    "w-11 text-center font-mono text-xs",
+                    buttonClass,
+                )}
+            >
+                {Math.round(zoom * 100)}%
+            </button>
+            <button
+                type="button"
+                onClick={() => onZoom(zoom * ZOOM_STEP)}
+                disabled={zoom >= max}
+                aria-label={labels.zoomIn}
+                title={labels.zoomIn}
+                className={buttonClass}
+            >
+                <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+        </>
+    );
+}
+
 function SettingSection({
     icon: Icon,
     title,
@@ -150,20 +281,24 @@ function SourceCard({
     file,
     selected,
     isPreview,
+    isCropped,
     onToggle,
     onPreview,
     onRemove,
     previewLabel,
     removeLabel,
+    croppedLabel,
 }: {
     file: File;
     selected: boolean;
     isPreview: boolean;
+    isCropped: boolean;
     onToggle: () => void;
     onPreview: () => void;
     onRemove: () => void;
     previewLabel: string;
     removeLabel: string;
+    croppedLabel: string;
 }) {
     const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -204,6 +339,14 @@ function SourceCard({
                         <Eye className="h-3 w-3" />
                     </span>
                 )}
+                {isCropped && (
+                    <span
+                        className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-background/90 p-1 text-foreground shadow-sm"
+                        title={croppedLabel}
+                    >
+                        <Crop className="h-3 w-3" />
+                    </span>
+                )}
             </button>
 
             <div className="absolute top-1.5 left-1.5">
@@ -234,7 +377,15 @@ function SourceCard({
     );
 }
 
-/** A processed output. Solid outline with metrics and download actions. */
+/** Checkerboard behind previews, so transparent areas are visible. */
+const CHECKERBOARD_STYLE: React.CSSProperties = {
+    backgroundColor: "var(--muted)",
+    backgroundImage:
+        "repeating-conic-gradient(color-mix(in oklch, var(--muted-foreground) 14%, transparent) 0% 25%, transparent 0% 50%)",
+    backgroundSize: "16px 16px",
+};
+
+/** A processed output: preview on a checkerboard, size savings, actions. */
 function ResultCard({
     image,
     onOpen,
@@ -261,73 +412,99 @@ function ResultCard({
     }, [image]);
 
     const { isSmaller, percent } = getSizeDelta(image);
+    const sizeRatio =
+        image.originalSize > 0
+            ? Math.min(100, (image.size / image.originalSize) * 100)
+            : 100;
 
     return (
-        <div className="group flex flex-col overflow-hidden rounded-xl border bg-card">
+        <div className="group flex flex-col overflow-hidden rounded-xl border bg-card transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-md">
             <button
                 type="button"
                 onClick={onOpen}
                 aria-label={`${previewAriaLabel}: ${image.fileName}`}
-                className="relative flex aspect-4/3 w-full items-center justify-center overflow-hidden bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="relative flex aspect-4/3 w-full items-center justify-center overflow-hidden border-b outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                style={CHECKERBOARD_STYLE}
             >
                 {/*eslint-disable-next-line*/}
                 <img
                     ref={imgRef}
                     alt={image.fileName}
                     loading="lazy"
-                    className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.03]"
+                    className="max-h-full max-w-full object-contain p-4 drop-shadow-sm transition-transform duration-200 group-hover:scale-[1.03]"
                 />
-                <span className="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20" />
+                <span className="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/15" />
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
                     <span className="rounded-full bg-background/90 p-2 shadow-sm">
                         <Eye className="h-4 w-4" />
                     </span>
                 </span>
-            </button>
-            <div className="flex flex-1 flex-col gap-2 p-3">
-                <p
-                    className="truncate text-sm font-medium"
-                    title={image.fileName}
+                <span className="pointer-events-none absolute top-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide shadow-sm backdrop-blur">
+                    {image.format.toUpperCase()}
+                </span>
+                <span
+                    className={cn(
+                        "pointer-events-none absolute top-2 right-2 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm",
+                        isSmaller ? "bg-emerald-600/90" : "bg-destructive/90",
+                    )}
                 >
-                    {image.fileName}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                    <Badge variant="secondary" className="text-[11px]">
-                        {image.format.toUpperCase()}
-                    </Badge>
-                    <Badge
-                        variant={isSmaller ? "default" : "destructive"}
-                        className="text-[11px]"
+                    {isSmaller ? "−" : "+"}
+                    {percent}%
+                </span>
+            </button>
+            <div className="flex flex-1 flex-col gap-3 p-3">
+                <div className="min-w-0 space-y-1">
+                    <p
+                        className="truncate text-sm font-medium"
+                        title={image.fileName}
                     >
-                        {isSmaller ? "−" : "+"}
-                        {percent}%
-                    </Badge>
-                    <Badge variant="outline" className="text-[11px]">
-                        {formatFileSize(image.originalSize)} →{" "}
-                        {formatFileSize(image.size)}
-                    </Badge>
-                    <Badge variant="outline" className="text-[11px]">
-                        {image.width}×{image.height}
-                    </Badge>
+                        {image.fileName}
+                    </p>
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="shrink-0">
+                            {image.width}×{image.height}
+                        </span>
+                        <span className="h-3 w-px shrink-0 bg-border" />
+                        <span className="truncate">
+                            <span className="line-through decoration-muted-foreground/60">
+                                {formatFileSize(image.originalSize)}
+                            </span>{" "}
+                            →{" "}
+                            <span className="font-medium text-foreground">
+                                {formatFileSize(image.size)}
+                            </span>
+                        </span>
+                    </p>
                 </div>
-                <div className="mt-auto flex gap-2 pt-1">
+                <div
+                    className="h-1 overflow-hidden rounded-full bg-muted"
+                    aria-hidden="true"
+                >
+                    <div
+                        className={cn(
+                            "h-full rounded-full",
+                            isSmaller ? "bg-emerald-500" : "bg-destructive",
+                        )}
+                        style={{ width: `${Math.max(sizeRatio, 2)}%` }}
+                    />
+                </div>
+                <div className="mt-auto flex gap-2">
                     <Button
                         size="sm"
-                        variant="outline"
-                        className="flex-1"
-                        onClick={onOpen}
+                        className="min-w-0 flex-1"
+                        onClick={() => ImageProcessor.downloadImage(image)}
                     >
-                        <Eye className="h-4 w-4" />
-                        {previewLabel}
+                        <Download className="h-4 w-4" />
+                        <span className="truncate">{downloadLabel}</span>
                     </Button>
                     <Button
                         size="icon-sm"
                         variant="outline"
-                        title={downloadLabel}
-                        aria-label={downloadLabel}
-                        onClick={() => ImageProcessor.downloadImage(image)}
+                        title={previewLabel}
+                        aria-label={`${previewAriaLabel}: ${image.fileName}`}
+                        onClick={onOpen}
                     >
-                        <Download className="h-4 w-4" />
+                        <Eye className="h-4 w-4" />
                     </Button>
                 </div>
             </div>
@@ -350,13 +527,13 @@ export default function ImageToolsPage() {
         current: number;
         total: number;
     } | null>(null);
-    const [qualityMode, setQualityMode] = useState<"manual" | "auto">("manual");
+    const [qualityMode, setQualityMode] = useState<"manual" | "auto">("auto");
     const [options, setOptions] =
         useState<ImageProcessingOptions>(DEFAULT_OPTIONS);
     const [isDragging, setIsDragging] = useState(false);
-    const [canvasMode, setCanvasMode] = useState<"preview" | "results">(
-        "preview",
-    );
+    const [canvasMode, setCanvasMode] = useState<
+        "preview" | "crop" | "results"
+    >("preview");
     const [pane, setPane] = useState<"sources" | "canvas" | "settings">(
         "canvas",
     );
@@ -368,28 +545,52 @@ export default function ImageToolsPage() {
     // Corner-radius preview: one chosen source image, shown large.
     const [previewFileId, setPreviewFileId] = useState<string | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-    const [previewScale, setPreviewScale] = useState<number | null>(null);
     const [previewNatural, setPreviewNatural] = useState<{
         width: number;
         height: number;
     } | null>(null);
-    const [modalScale, setModalScale] = useState<number | null>(null);
-    const previewImgRef = useRef<HTMLImageElement | null>(null);
+    const [setPreviewFrame, previewFrameWidth] =
+        useElementWidth<HTMLDivElement>();
+    const [setModalFrame, modalFrameWidth] = useElementWidth<HTMLDivElement>();
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+
+    // Crop: one area per source file (fractions of the source size).
+    const [crops, setCrops] = useState<Record<string, CropRect>>({});
+    const [cropAspect, setCropAspect] = useState<CropAspect>("free");
+    // Crop or resize: only the chosen one is shown and applied.
+    // Corner radius per image (falls back to options.cornerRadius). With
+    // "same for selected", edits go to every image checked in Sources.
+    const [radiusForSelected, setRadiusForSelected] = useState(true);
+    const [radii, setRadii] = useState<Record<string, number>>({});
+    /** Images whose background the user removed (by id). */
+    const [bgRemoved, setBgRemoved] = useState<Record<string, boolean>>({});
+    /** Eraser / brush strokes per image (by id). */
+    const [paints, setPaints] = useState<Record<string, PaintStroke[]>>({});
+    /** Undone strokes per image, for redo (cleared by a new stroke). */
+    const [redos, setRedos] = useState<Record<string, PaintStroke[]>>({});
+    const [paintTool, setPaintTool] = useState<PaintTool | null>(null);
+    const [brushSize, setBrushSize] = useState(32);
+    const [brushColor, setBrushColor] = useState("#ffffff");
+    const [transformMode, setTransformMode] = useState<"crop" | "size">("size");
 
     const [selectedProcessedImage, setSelectedProcessedImage] =
         useState<ProcessedImage | null>(null);
     const [processedPreviewUrl, setProcessedPreviewUrl] = useState<
         string | null
     >(null);
+    const [isBgConsentOpen, setIsBgConsentOpen] = useState(false);
 
     useEffect(() => {
-        const anyOpen = isPreviewModalOpen || selectedProcessedImage !== null;
+        const anyOpen =
+            isPreviewModalOpen ||
+            selectedProcessedImage !== null ||
+            isBgConsentOpen;
         if (!anyOpen) return;
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== "Escape") return;
             setIsPreviewModalOpen(false);
             setSelectedProcessedImage(null);
+            setIsBgConsentOpen(false);
         };
         const previousOverflow = document.body.style.overflow;
         document.body.style.overflow = "hidden";
@@ -398,22 +599,238 @@ export default function ImageToolsPage() {
             window.removeEventListener("keydown", onKey);
             document.body.style.overflow = previousOverflow;
         };
-    }, [isPreviewModalOpen, selectedProcessedImage]);
+    }, [isPreviewModalOpen, selectedProcessedImage, isBgConsentOpen]);
+
+    // Wheel zoom + drag to pan: the work area (preview / crop) and the
+    // full-size preview dialogs.
+    const {
+        zoom: viewZoom,
+        zoomTo: changeViewZoom,
+        attach: attachCanvasViewport,
+        panHandlers: canvasPanHandlers,
+    } = useZoomViewport({
+        min: ZOOM_MIN,
+        max: CANVAS_ZOOM_MAX,
+        enabled: canvasMode !== "results",
+    });
+    const {
+        zoom: modalZoom,
+        zoomTo: changeModalZoom,
+        reset: resetModalZoom,
+        attach: attachModalViewport,
+        panHandlers: modalPanHandlers,
+    } = useZoomViewport({
+        min: ZOOM_MIN,
+        max: MODAL_ZOOM_MAX,
+        enabled: isPreviewModalOpen || selectedProcessedImage !== null,
+    });
+    const zoomLabels = {
+        zoomIn: t.workspace.zoomIn,
+        zoomOut: t.workspace.zoomOut,
+        zoomFit: t.workspace.zoomFit,
+    };
 
     const previewEntry =
         files.find((f) => f.id === previewFileId) ?? files[0] ?? null;
     const previewFile = previewEntry?.file ?? null;
+
+    // Background removal: model status, and the previewed image's cut-out.
+    const bgStatus = useSyncExternalStore(
+        BackgroundRemover.subscribe,
+        BackgroundRemover.getStatus,
+        () => BG_IDLE_STATUS,
+    );
+    // Per image: only the one the user pressed the button for.
+    const removeBg = previewEntry
+        ? (bgRemoved[previewEntry.id] ?? false)
+        : false;
+    const [cutout, setCutout] = useState<{ file: File; blob: Blob } | null>(
+        null,
+    );
+    const [cutoutFailed, setCutoutFailed] = useState<File | null>(null);
     useEffect(() => {
-        if (!previewFile) {
+        if (!removeBg || !previewFile) return;
+        let cancelled = false;
+        BackgroundRemover.remove(previewFile)
+            .then((blob) => {
+                if (!cancelled) setCutout({ file: previewFile, blob });
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setCutoutFailed(previewFile);
+                // One toast even if several requests fail together.
+                toast.error(t.imageTools.background.error, {
+                    toastId: "bg-removal-error",
+                });
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [removeBg, previewFile, t]);
+
+    /**
+     * What the canvas shows: the source, or its cut-out once it's ready
+     * (the source again if removal failed).
+     */
+    const previewSource: Blob | null = !removeBg
+        ? previewFile
+        : cutout && cutout.file === previewFile
+          ? cutout.blob
+          : cutoutFailed === previewFile
+            ? previewFile
+            : null;
+    const isRemovingBg = removeBg && previewFile !== null && !previewSource;
+
+    /**
+     * The "Remove background" button. The first time (model not in the
+     * browser cache yet) it asks for consent before the large download.
+     */
+    const handleRemoveBackgroundClick = async () => {
+        if (removeBg) {
+            toggleRemoveBackground(false);
+            return;
+        }
+        if (await BackgroundRemover.isModelCached()) {
+            toggleRemoveBackground(true);
+        } else {
+            setIsBgConsentOpen(true);
+        }
+    };
+
+    const confirmModelDownload = () => {
+        setIsBgConsentOpen(false);
+        toggleRemoveBackground(true);
+    };
+
+    // Eraser / brush: only on the preview tab, for the previewed image.
+    const activeTool =
+        canvasMode === "preview" && previewEntry ? paintTool : null;
+    const previewStrokes = (previewEntry && paints[previewEntry.id]) || [];
+    const hasErased = previewStrokes.some((s) => s.tool === "erase");
+
+    const selectPaintTool = (tool: PaintTool) => {
+        setPaintTool((prev) =>
+            prev === tool && canvasMode === "preview" ? null : tool,
+        );
+        setCanvasMode("preview");
+    };
+
+    const previewRedos = (previewEntry && redos[previewEntry.id]) || [];
+
+    const addStroke = (stroke: PaintStroke) => {
+        if (!previewEntry) return;
+        const id = previewEntry.id;
+        setPaints((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), stroke] }));
+        setRedos((prev) => ({ ...prev, [id]: [] }));
+    };
+
+    const undoStroke = () => {
+        const last = previewStrokes.at(-1);
+        if (!previewEntry || !last) return;
+        const id = previewEntry.id;
+        setPaints((prev) => ({ ...prev, [id]: previewStrokes.slice(0, -1) }));
+        setRedos((prev) => ({ ...prev, [id]: [...previewRedos, last] }));
+    };
+
+    const redoStroke = () => {
+        const next = previewRedos.at(-1);
+        if (!previewEntry || !next) return;
+        const id = previewEntry.id;
+        setPaints((prev) => ({ ...prev, [id]: [...previewStrokes, next] }));
+        setRedos((prev) => ({ ...prev, [id]: previewRedos.slice(0, -1) }));
+    };
+
+    const clearStrokes = () => {
+        if (!previewEntry) return;
+        const id = previewEntry.id;
+        setPaints((prev) => ({ ...prev, [id]: [] }));
+        setRedos((prev) => ({ ...prev, [id]: [] }));
+    };
+
+    const toggleRemoveBackground = (enabled: boolean) => {
+        if (!previewEntry) return;
+        const id = previewEntry.id;
+        setBgRemoved((prev) => ({ ...prev, [id]: enabled }));
+        // Turning it on again retries a failed image.
+        setCutoutFailed(null);
+        if (enabled) BackgroundRemover.load();
+    };
+
+    // Shortcuts: E eraser, B brush, Esc to put the tool down,
+    // Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo. Matched by physical key
+    // (e.code), so they work with any keyboard layout (e.g. Ukrainian).
+    const shortcutsRef = useRef({
+        selectPaintTool,
+        undoStroke,
+        redoStroke,
+        activeTool,
+    });
+    useEffect(() => {
+        shortcutsRef.current = {
+            selectPaintTool,
+            undoStroke,
+            redoStroke,
+            activeTool,
+        };
+    });
+    const canUseShortcuts =
+        canvasMode !== "results" &&
+        previewEntry !== null &&
+        !isPreviewModalOpen &&
+        !isBgConsentOpen;
+    useEffect(() => {
+        if (!canUseShortcuts) return;
+        const onKey = (e: KeyboardEvent) => {
+            const target = e.target;
+            if (
+                target instanceof Element &&
+                target.closest("input, textarea, select, [contenteditable]")
+            ) {
+                return;
+            }
+            const shortcuts = shortcutsRef.current;
+            if (e.ctrlKey || e.metaKey) {
+                if (!shortcuts.activeTool || e.altKey) return;
+                const redo =
+                    e.code === "KeyY" || (e.code === "KeyZ" && e.shiftKey);
+                if (e.code !== "KeyZ" && !redo) return;
+                e.preventDefault();
+                if (redo) shortcuts.redoStroke();
+                else shortcuts.undoStroke();
+            } else if (e.altKey || e.shiftKey || e.repeat) {
+                return;
+            } else if (e.code === "KeyE") {
+                shortcuts.selectPaintTool("erase");
+            } else if (e.code === "KeyB") {
+                shortcuts.selectPaintTool("brush");
+            } else if (e.key === "Escape" && shortcuts.activeTool) {
+                setPaintTool(null);
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [canUseShortcuts]);
+
+    useEffect(() => {
+        if (!previewSource) {
             setPreviewUrl(null);
             return;
         }
-        setPreviewScale(null);
         setPreviewNatural(null);
-        const url = URL.createObjectURL(previewFile);
+        const url = URL.createObjectURL(previewSource);
         setPreviewUrl(url);
-        return () => URL.revokeObjectURL(url);
-    }, [previewFile]);
+        const probe = new Image();
+        probe.onload = () =>
+            setPreviewNatural({
+                width: probe.naturalWidth,
+                height: probe.naturalHeight,
+            });
+        probe.src = url;
+        return () => {
+            probe.onload = null;
+            URL.revokeObjectURL(url);
+        };
+    }, [previewSource]);
 
     useEffect(() => {
         if (!selectedProcessedImage) {
@@ -425,59 +842,130 @@ export default function ImageToolsPage() {
         return () => URL.revokeObjectURL(url);
     }, [selectedProcessedImage]);
 
-    const previewOutputSize = previewNatural
-        ? calculateOutputSize(
+    const activeCrop =
+        (transformMode === "crop" && previewEntry && crops[previewEntry.id]) ||
+        CropUtils.FULL;
+    const previewCropArea = previewNatural
+        ? CropUtils.getArea(
               previewNatural.width,
               previewNatural.height,
-              options.maxWidth,
-              options.maxHeight,
+              activeCrop,
+          )
+        : null;
+    const previewOutputSize = previewCropArea
+        ? calculateOutputSize(
+              previewCropArea.width,
+              previewCropArea.height,
+              transformMode === "size" ? options.maxWidth : undefined,
+              transformMode === "size" ? options.maxHeight : undefined,
           )
         : null;
 
-    const handlePreviewLoad = () => {
-        const img = previewImgRef.current;
-        if (!img || !img.naturalWidth || !img.naturalHeight) return;
-        setPreviewNatural({
-            width: img.naturalWidth,
-            height: img.naturalHeight,
-        });
-        const output = calculateOutputSize(
-            img.naturalWidth,
-            img.naturalHeight,
-            options.maxWidth,
-            options.maxHeight,
-        );
-        setPreviewScale(
-            output.width > 0 ? Math.min(1, img.clientWidth / output.width) : 1,
-        );
-    };
+    /** Frame width that fits the output size into the given max bounds. */
+    const getFrameWidth = (maxWidth: string, maxHeight: string) =>
+        previewOutputSize
+            ? `min(${previewOutputSize.width}px, ${maxWidth}, calc(${maxHeight} * ${
+                  previewOutputSize.width / previewOutputSize.height
+              }))`
+            : undefined;
 
-    const getScaledRadius = (): string => {
+    const getScaledRadius = (frameWidth: number): string => {
         if (activeRadius === 9999) return "9999px";
-        const scale = previewScale ?? 1;
+        const scale =
+            previewOutputSize && frameWidth > 0
+                ? Math.min(1, frameWidth / previewOutputSize.width)
+                : 1;
         return `${Math.round(activeRadius * scale)}px`;
     };
 
-    const handleModalLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-        const el = e.currentTarget;
-        if (!el.naturalWidth || !previewOutputSize) return;
-        setModalScale(Math.min(1, el.clientWidth / previewOutputSize.width));
+    const getAspectRatio = (aspect: CropAspect): number | null => {
+        if (aspect === "original") {
+            return previewNatural
+                ? previewNatural.width / previewNatural.height
+                : null;
+        }
+        return (
+            CROP_ASPECT_PRESETS.find((p) => p.value === aspect)?.ratio ?? null
+        );
+    };
+    const cropRatio = getAspectRatio(cropAspect);
+
+    const updateCrop = (next: CropRect) => {
+        if (!previewEntry) return;
+        const id = previewEntry.id;
+        setCrops((prev) => {
+            const rest = { ...prev };
+            delete rest[id];
+            return CropUtils.isFull(next) ? rest : { ...rest, [id]: next };
+        });
     };
 
-    const getModalRadius = (): string => {
-        if (activeRadius === 9999) return "9999px";
-        return `${Math.round(activeRadius * (modalScale ?? 1))}px`;
+    const selectCropAspect = (aspect: CropAspect) => {
+        setCropAspect(aspect);
+        const ratio = getAspectRatio(aspect);
+        if (ratio && previewNatural) {
+            updateCrop(
+                CropUtils.fitAspect(
+                    ratio,
+                    previewNatural.width,
+                    previewNatural.height,
+                ),
+            );
+        }
+    };
+
+    const selectTransformMode = (mode: "crop" | "size") => {
+        setTransformMode(mode);
+        if (mode === "crop") setCanvasMode("crop");
+        else setCanvasMode((prev) => (prev === "crop" ? "preview" : prev));
+    };
+
+    /** Sets the radius for the selected images, or only the previewed one. */
+    const applyCornerRadius = (value: number, toSelected: boolean) => {
+        const ids = toSelected
+            ? files.filter((f) => f.selected).map((f) => f.id)
+            : previewEntry
+              ? [previewEntry.id]
+              : [];
+        if (ids.length === 0) {
+            setOptions({ ...options, cornerRadius: value });
+            return;
+        }
+        setRadii((prev) => {
+            const next = { ...prev };
+            for (const id of ids) next[id] = value;
+            return next;
+        });
+    };
+
+    const setCornerRadius = (value: number) =>
+        applyCornerRadius(value, radiusForSelected);
+
+    /** Checking "same for selected" copies the current value to them. */
+    const toggleRadiusForSelected = (forSelected: boolean) => {
+        if (forSelected) applyCornerRadius(activeRadius, true);
+        setRadiusForSelected(forSelected);
+    };
+
+    const resetCrop = () => {
+        setCropAspect("free");
+        updateCrop(CropUtils.FULL);
     };
 
     const selectPreviewFile = (id: string) => {
         setPreviewFileId(id);
-        setCanvasMode("preview");
+        setCanvasMode((prev) => (prev === "crop" ? "crop" : "preview"));
         setPane("canvas");
     };
 
     const openPreviewModal = () => {
-        setModalScale(null);
+        resetModalZoom();
         setIsPreviewModalOpen(true);
+    };
+
+    const openProcessedPreview = (image: ProcessedImage) => {
+        resetModalZoom();
+        setSelectedProcessedImage(image);
     };
 
     const openFileDialog = () => {
@@ -488,11 +976,18 @@ export default function ImageToolsPage() {
         setProcessedImages([]);
         setProgress(0);
         setProgressCount(null);
+        setCanvasMode("preview");
     };
 
     const resetOptions = () => {
         setOptions({ ...DEFAULT_OPTIONS });
-        setQualityMode("manual");
+        setQualityMode("auto");
+        setRadii({});
+        setBgRemoved({});
+        setRadiusForSelected(true);
+        setCrops({});
+        setCropAspect("free");
+        setTransformMode("size");
     };
 
     const addFiles = useCallback(
@@ -539,6 +1034,14 @@ export default function ImageToolsPage() {
                 selected: true,
             }));
             setFiles(newEntries);
+            setCrops({});
+            setRadii({});
+            setBgRemoved({});
+            setPaints({});
+            setRedos({});
+            setPreviewFileId(null);
+            setCanvasMode("preview");
+            setPane("canvas");
             resetResults();
 
             if (extractedCount > 0) {
@@ -664,9 +1167,8 @@ export default function ImageToolsPage() {
     };
 
     const processImages = async () => {
-        const selectedFiles = files
-            .filter((f) => f.selected)
-            .map((f) => f.file);
+        const selectedEntries = files.filter((f) => f.selected);
+        const selectedFiles = selectedEntries.map((f) => f.file);
         if (selectedFiles.length === 0) return;
 
         const controller = new AbortController();
@@ -682,6 +1184,10 @@ export default function ImageToolsPage() {
                 quality: qualityMode === "manual" ? options.quality : undefined,
                 maxSizeKB:
                     qualityMode === "auto" ? options.maxSizeKB : undefined,
+                maxWidth:
+                    transformMode === "size" ? options.maxWidth : undefined,
+                maxHeight:
+                    transformMode === "size" ? options.maxHeight : undefined,
             };
 
             const processed = await ImageProcessor.processImages(
@@ -692,6 +1198,18 @@ export default function ImageToolsPage() {
                     setProgressCount({ current, total });
                 },
                 controller.signal,
+                selectedEntries.map((f) => {
+                    const extra: Partial<ImageProcessingOptions> = {};
+                    if (transformMode === "crop" && crops[f.id]) {
+                        extra.crop = crops[f.id];
+                    }
+                    if (radii[f.id] !== undefined) {
+                        extra.cornerRadius = radii[f.id];
+                    }
+                    if (bgRemoved[f.id]) extra.removeBackground = true;
+                    if (paints[f.id]?.length) extra.strokes = paints[f.id];
+                    return extra;
+                }),
             );
 
             if (controller.signal.aborted) {
@@ -705,6 +1223,9 @@ export default function ImageToolsPage() {
                 } else {
                     toast.info(t.imageTools.toast.cancelledAll);
                 }
+            } else if (processed.length === 0) {
+                // Every file failed (e.g. the background model didn't load).
+                toast.error(t.imageTools.toast.error);
             } else {
                 setProcessedImages(processed);
                 setCanvasMode("results");
@@ -750,11 +1271,21 @@ export default function ImageToolsPage() {
 
     const clearAll = () => {
         setFiles([]);
+        setCrops({});
+        setRadii({});
+        setBgRemoved({});
+        setPaints({});
+        setRedos({});
+        setPreviewFileId(null);
         resetResults();
     };
 
     const clearSelected = () => {
         setFiles((prev) => prev.filter((f) => !f.selected));
+        setPreviewFileId((prev) => {
+            const remaining = files.filter((f) => !f.selected);
+            return remaining.some((f) => f.id === prev) ? prev : null;
+        });
         resetResults();
     };
 
@@ -767,7 +1298,9 @@ export default function ImageToolsPage() {
     const selectedCount = files.filter((f) => f.selected).length;
     const allSelected = files.length > 0 && files.every((f) => f.selected);
     const someSelected = files.some((f) => f.selected);
-    const activeRadius = options.cornerRadius ?? 0;
+    const activeRadius = previewEntry
+        ? (radii[previewEntry.id] ?? options.cornerRadius ?? 0)
+        : (options.cornerRadius ?? 0);
 
     const totalOriginalSize = processedImages.reduce(
         (sum, img) => sum + img.originalSize,
@@ -786,10 +1319,20 @@ export default function ImageToolsPage() {
               )
             : 0;
 
-    const optionsSummary =
+    const croppedSelectedCount =
+        transformMode === "crop"
+            ? files.filter((f) => f.selected && crops[f.id]).length
+            : 0;
+    const optionsSummary = [
         qualityMode === "manual"
             ? `${t.imageTools.format.quality} ${options.quality}%`
-            : `≤ ${options.maxSizeKB ?? 0} KB`;
+            : `≤ ${options.maxSizeKB ?? 0} KB`,
+        croppedSelectedCount > 0
+            ? `${t.imageTools.crop.tab}: ${croppedSelectedCount}`
+            : null,
+    ]
+        .filter(Boolean)
+        .join(" · ");
 
     const paneOptions = [
         {
@@ -936,6 +1479,10 @@ export default function ImageToolsPage() {
                                             isPreview={
                                                 previewEntry?.id === file.id
                                             }
+                                            isCropped={
+                                                transformMode === "crop" &&
+                                                Boolean(crops[file.id])
+                                            }
                                             onToggle={() =>
                                                 toggleFileSelection(file.id)
                                             }
@@ -951,6 +1498,7 @@ export default function ImageToolsPage() {
                                             removeLabel={
                                                 t.imageTools.upload.removeFile
                                             }
+                                            croppedLabel={t.imageTools.crop.tab}
                                         />
                                     ))}
                                 </div>
@@ -966,7 +1514,7 @@ export default function ImageToolsPage() {
                 {/* Canvas: preview / results */}
                 <section
                     className={cn(
-                        "min-h-0 flex-1 flex-col overflow-hidden xl:flex",
+                        "relative min-h-0 flex-1 flex-col overflow-hidden xl:flex",
                         pane === "canvas" ? "flex" : "hidden",
                     )}
                 >
@@ -986,6 +1534,19 @@ export default function ImageToolsPage() {
                             </button>
                             <button
                                 type="button"
+                                onClick={() => selectTransformMode("crop")}
+                                className={cn(
+                                    "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                                    canvasMode === "crop"
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground",
+                                )}
+                            >
+                                <Crop className="h-3.5 w-3.5" />
+                                {t.imageTools.crop.tab}
+                            </button>
+                            <button
+                                type="button"
                                 onClick={() => setCanvasMode("results")}
                                 className={cn(
                                     "rounded-md px-3 py-1 text-xs font-medium transition-colors",
@@ -999,7 +1560,7 @@ export default function ImageToolsPage() {
                         </div>
 
                         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                            {canvasMode === "preview"
+                            {canvasMode !== "results"
                                 ? previewEntry
                                     ? previewEntry.file.name
                                     : t.imageTools.style.previewEmpty
@@ -1013,6 +1574,92 @@ export default function ImageToolsPage() {
                                     }${Math.abs(totalReduction)}%)`
                                   : t.imageTools.results.description}
                         </span>
+
+                        {canvasMode !== "results" && previewEntry && (
+                            <div className="flex shrink-0 items-center gap-2">
+                                {activeTool && (
+                                    <div
+                                        className="flex items-center gap-2"
+                                        title={t.imageTools.paint.size}
+                                    >
+                                        <Slider
+                                            className="w-24"
+                                            min={2}
+                                            max={200}
+                                            step={1}
+                                            value={[brushSize]}
+                                            onValueChange={([value]) =>
+                                                setBrushSize(value)
+                                            }
+                                            aria-label={t.imageTools.paint.size}
+                                        />
+                                        <span className="w-7 text-right font-mono text-xs text-muted-foreground">
+                                            {brushSize}
+                                        </span>
+                                    </div>
+                                )}
+                                {activeTool === "brush" && (
+                                    <label
+                                        className="relative h-6 w-6 shrink-0 cursor-pointer overflow-hidden rounded-full border shadow-sm"
+                                        style={{ backgroundColor: brushColor }}
+                                        title={t.imageTools.paint.color}
+                                    >
+                                        <input
+                                            type="color"
+                                            value={brushColor}
+                                            onChange={(e) =>
+                                                setBrushColor(e.target.value)
+                                            }
+                                            aria-label={
+                                                t.imageTools.paint.color
+                                            }
+                                            className="absolute inset-0 cursor-pointer opacity-0"
+                                        />
+                                    </label>
+                                )}
+                                <div
+                                    role="toolbar"
+                                    aria-label={t.imageTools.paint.tools}
+                                    className="inline-flex items-center rounded-lg border bg-muted/40 p-0.5"
+                                >
+                                    <ToolButton
+                                        icon={Eraser}
+                                        label={t.imageTools.paint.eraser}
+                                        shortcut="E"
+                                        active={activeTool === "erase"}
+                                        onClick={() => selectPaintTool("erase")}
+                                    />
+                                    <ToolButton
+                                        icon={Brush}
+                                        label={t.imageTools.paint.brush}
+                                        shortcut="B"
+                                        active={activeTool === "brush"}
+                                        onClick={() => selectPaintTool("brush")}
+                                    />
+                                    <div className="mx-0.5 h-4 w-px bg-border" />
+                                    <ToolButton
+                                        icon={Undo2}
+                                        label={t.imageTools.paint.undo}
+                                        shortcut="Ctrl+Z"
+                                        disabled={previewStrokes.length === 0}
+                                        onClick={undoStroke}
+                                    />
+                                    <ToolButton
+                                        icon={Redo2}
+                                        label={t.imageTools.paint.redo}
+                                        shortcut="Ctrl+Shift+Z"
+                                        disabled={previewRedos.length === 0}
+                                        onClick={redoStroke}
+                                    />
+                                    <ToolButton
+                                        icon={Trash2}
+                                        label={t.imageTools.paint.clear}
+                                        disabled={previewStrokes.length === 0}
+                                        onClick={clearStrokes}
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         {canvasMode === "results" &&
                             processedImages.length > 0 && (
@@ -1065,19 +1712,26 @@ export default function ImageToolsPage() {
                             )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto">
+                    <div
+                        ref={attachCanvasViewport}
+                        {...canvasPanHandlers}
+                        className={cn(
+                            "min-h-0 flex-1 overflow-auto",
+                            canvasMode !== "results" &&
+                                viewZoom > 1 &&
+                                "cursor-grab select-none active:cursor-grabbing",
+                        )}
+                    >
                         {canvasMode === "results" ? (
                             <div className="p-4">
                                 {processedImages.length > 0 ? (
-                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                                    <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-4">
                                         {processedImages.map((img, idx) => (
                                             <ResultCard
                                                 key={`${img.fileName}-${idx}`}
                                                 image={img}
                                                 onOpen={() =>
-                                                    setSelectedProcessedImage(
-                                                        img,
-                                                    )
+                                                    openProcessedPreview(img)
                                                 }
                                                 previewLabel={
                                                     t.imageTools.results.preview
@@ -1088,7 +1742,7 @@ export default function ImageToolsPage() {
                                                 }
                                                 downloadLabel={
                                                     t.imageTools.results
-                                                        .downloadFile
+                                                        .download
                                                 }
                                             />
                                         ))}
@@ -1114,92 +1768,138 @@ export default function ImageToolsPage() {
                                 )}
                             </div>
                         ) : (
-                            <div className="flex min-h-80 items-center justify-center p-6 xl:h-full">
-                                {previewUrl && previewEntry ? (
-                                    <div className="flex flex-col items-center gap-4">
-                                        {/*eslint-disable-next-line*/}
-                                        <img
-                                            key={
-                                                previewOutputSize
-                                                    ? `${previewOutputSize.width}x${previewOutputSize.height}`
-                                                    : "preview"
-                                            }
-                                            ref={previewImgRef}
-                                            src={previewUrl}
-                                            alt={previewEntry.file.name}
-                                            role="button"
-                                            tabIndex={0}
-                                            title={t.imageTools.style.preview}
-                                            aria-label={
-                                                t.imageTools.style.preview
-                                            }
-                                            onClick={openPreviewModal}
-                                            onKeyDown={(e) => {
-                                                if (
-                                                    e.key === "Enter" ||
-                                                    e.key === " "
-                                                ) {
-                                                    e.preventDefault();
-                                                    openPreviewModal();
-                                                }
-                                            }}
-                                            className="block cursor-zoom-in object-contain outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                            style={{
-                                                maxWidth: previewOutputSize
-                                                    ? `min(${previewOutputSize.width}px, 100%)`
-                                                    : "100%",
-                                                maxHeight: previewOutputSize
-                                                    ? `min(${previewOutputSize.height}px, 65vh)`
-                                                    : "65vh",
-                                                borderRadius:
-                                                    getScaledRadius(),
-                                                boxShadow:
-                                                    "0 0 0 1px var(--border)",
-                                            }}
-                                            onLoad={handlePreviewLoad}
-                                        />
-                                        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-xl border bg-background px-3 py-2 text-xs shadow-sm">
-                                            <span
-                                                className="max-w-45 truncate font-medium"
-                                                title={previewEntry.file.name}
-                                            >
-                                                {previewEntry.file.name}
-                                            </span>
-                                            {previewNatural &&
-                                                previewOutputSize && (
-                                                    <>
-                                                        <div className="hidden h-3 w-px bg-border sm:block" />
-                                                        <span className="text-muted-foreground">
-                                                            {previewNatural.width !==
-                                                                previewOutputSize.width ||
-                                                            previewNatural.height !==
-                                                                previewOutputSize.height
-                                                                ? `${previewNatural.width}×${previewNatural.height} → ${previewOutputSize.width}×${previewOutputSize.height}`
-                                                                : `${previewOutputSize.width}×${previewOutputSize.height}`}
-                                                        </span>
-                                                    </>
+                            <div className="flex min-h-80 items-center-safe justify-center px-6 pt-6 pb-20 xl:min-h-full">
+                                {(previewUrl || isRemovingBg) &&
+                                previewEntry ? (
+                                    <div className="flex w-full flex-col items-center-safe gap-4">
+                                        {isRemovingBg ? (
+                                            <div className="flex h-60 w-full max-w-sm flex-col items-center justify-center gap-3 rounded-xl border border-dashed text-center">
+                                                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                                <p className="text-sm font-medium">
+                                                    {bgStatus.state ===
+                                                    "loading"
+                                                        ? `${t.imageTools.background.loading} ${Math.round(bgStatus.progress)}%`
+                                                        : t.imageTools
+                                                              .background
+                                                              .processing}
+                                                </p>
+                                                {bgStatus.state ===
+                                                    "loading" && (
+                                                    <Progress
+                                                        value={
+                                                            bgStatus.progress
+                                                        }
+                                                        className="w-48"
+                                                    />
                                                 )}
-                                            <div className="hidden h-3 w-px bg-border sm:block" />
-                                            <span className="text-muted-foreground">
-                                                {formatFileSize(
-                                                    previewEntry.file.size,
-                                                )}
-                                            </span>
-                                            <div className="hidden h-3 w-px bg-border sm:block" />
-                                            <button
-                                                type="button"
-                                                onClick={openPreviewModal}
-                                                aria-label={
-                                                    t.imageTools.style.preview
+                                            </div>
+                                        ) : !previewUrl || !previewNatural ? (
+                                            <div className="h-40 w-40 animate-pulse rounded-md bg-muted" />
+                                        ) : canvasMode === "crop" ? (
+                                            <CropEditor
+                                                src={previewUrl}
+                                                alt={previewEntry.file.name}
+                                                natural={previewNatural}
+                                                crop={activeCrop}
+                                                aspect={cropRatio}
+                                                onChange={updateCrop}
+                                                zoom={viewZoom}
+                                                onZoomChange={changeViewZoom}
+                                                areaLabel={
+                                                    t.imageTools.crop.area
                                                 }
+                                            />
+                                        ) : (
+                                            <div
+                                                ref={setPreviewFrame}
+                                                role="button"
+                                                tabIndex={0}
                                                 title={
                                                     t.imageTools.style.preview
                                                 }
-                                                className="text-muted-foreground transition-colors hover:text-foreground"
+                                                aria-label={
+                                                    t.imageTools.style.preview
+                                                }
+                                                onClick={
+                                                    activeTool
+                                                        ? undefined
+                                                        : openPreviewModal
+                                                }
+                                                onKeyDown={(e) => {
+                                                    if (
+                                                        e.key === "Enter" ||
+                                                        e.key === " "
+                                                    ) {
+                                                        e.preventDefault();
+                                                        openPreviewModal();
+                                                    }
+                                                }}
+                                                className={cn(
+                                                    "relative shrink-0 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                                    !activeTool &&
+                                                        "cursor-zoom-in",
+                                                )}
+                                                style={{
+                                                    width: `calc(${getFrameWidth(
+                                                        "100%",
+                                                        "65vh",
+                                                    )} * ${viewZoom})`,
+                                                    aspectRatio:
+                                                        previewOutputSize
+                                                            ? `${previewOutputSize.width} / ${previewOutputSize.height}`
+                                                            : undefined,
+                                                    borderRadius:
+                                                        getScaledRadius(
+                                                            previewFrameWidth,
+                                                        ),
+                                                    boxShadow:
+                                                        "0 0 0 1px var(--border)",
+                                                    ...((removeBg ||
+                                                        hasErased) &&
+                                                        CHECKERBOARD_STYLE),
+                                                }}
                                             >
-                                                <Maximize2 className="h-3.5 w-3.5" />
-                                            </button>
-                                        </div>
+                                                {activeTool ||
+                                                previewStrokes.length > 0 ? (
+                                                    <PaintLayer
+                                                        src={previewUrl}
+                                                        alt={
+                                                            previewEntry.file
+                                                                .name
+                                                        }
+                                                        natural={previewNatural}
+                                                        strokes={previewStrokes}
+                                                        tool={activeTool}
+                                                        color={brushColor}
+                                                        size={brushSize}
+                                                        onStroke={addStroke}
+                                                        className="absolute max-w-none"
+                                                        style={getCropImageStyle(
+                                                            activeCrop,
+                                                        )}
+                                                    />
+                                                ) : (
+                                                    // eslint-disable-next-line @next/next/no-img-element
+                                                    <img
+                                                        src={previewUrl}
+                                                        alt={
+                                                            previewEntry.file
+                                                                .name
+                                                        }
+                                                        draggable={false}
+                                                        className="absolute max-w-none"
+                                                        style={getCropImageStyle(
+                                                            activeCrop,
+                                                        )}
+                                                    />
+                                                )}
+                                            </div>
+                                        )}
+                                        {canvasMode === "crop" && (
+                                            <p className="max-w-md text-center text-xs text-muted-foreground">
+                                                {t.imageTools.crop.hint}
+                                            </p>
+                                        )}
                                         {previewFileId === null &&
                                             files.length > 1 && (
                                                 <p className="text-xs text-muted-foreground">
@@ -1230,6 +1930,63 @@ export default function ImageToolsPage() {
                             </div>
                         )}
                     </div>
+                    {canvasMode !== "results" && previewUrl && previewEntry && (
+                        <div className="absolute inset-x-0 bottom-3 z-10 mx-auto flex w-fit max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-xs whitespace-nowrap shadow-sm *:shrink-0">
+                            <span
+                                className="max-w-45 min-w-0 shrink! truncate font-medium"
+                                title={previewEntry.file.name}
+                            >
+                                {previewEntry.file.name}
+                            </span>
+                            {previewNatural && previewOutputSize && (
+                                <>
+                                    <div className="hidden h-3 w-px bg-border sm:block" />
+                                    <span className="text-muted-foreground">
+                                        {previewNatural.width !==
+                                            previewOutputSize.width ||
+                                        previewNatural.height !==
+                                            previewOutputSize.height
+                                            ? `${previewNatural.width}×${previewNatural.height} → ${previewOutputSize.width}×${previewOutputSize.height}`
+                                            : `${previewOutputSize.width}×${previewOutputSize.height}`}
+                                    </span>
+                                </>
+                            )}
+                            <div className="hidden h-3 w-px bg-border sm:block" />
+                            <span className="text-muted-foreground">
+                                {formatFileSize(previewEntry.file.size)}
+                            </span>
+                            <div className="hidden h-3 w-px bg-border sm:block" />
+                            <ZoomControls
+                                zoom={viewZoom}
+                                max={CANVAS_ZOOM_MAX}
+                                onZoom={changeViewZoom}
+                                labels={zoomLabels}
+                            />
+                            <div className="hidden h-3 w-px bg-border sm:block" />
+                            {canvasMode === "crop" ? (
+                                <button
+                                    type="button"
+                                    onClick={resetCrop}
+                                    disabled={!crops[previewEntry.id]}
+                                    aria-label={t.imageTools.crop.reset}
+                                    title={t.imageTools.crop.reset}
+                                    className="text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                                >
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={openPreviewModal}
+                                    aria-label={t.imageTools.style.preview}
+                                    title={t.imageTools.style.preview}
+                                    className="text-muted-foreground transition-colors hover:text-foreground"
+                                >
+                                    <Maximize2 className="h-3.5 w-3.5" />
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </section>
 
                 {/* Inspector */}
@@ -1436,58 +2193,55 @@ export default function ImageToolsPage() {
                         <div className="h-px bg-border" />
 
                         <SettingSection
-                            icon={Maximize2}
-                            title={t.imageTools.size.tab}
+                            icon={Eraser}
+                            title={t.imageTools.background.tab}
                         >
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-2">
-                                    <Label
-                                        htmlFor="maxWidth"
-                                        className="text-xs text-muted-foreground"
-                                    >
-                                        {t.imageTools.size.maxWidth}
-                                    </Label>
-                                    <Input
-                                        id="maxWidth"
-                                        type="number"
-                                        placeholder={t.imageTools.size.auto}
-                                        value={options.maxWidth ?? ""}
-                                        onChange={(e) =>
-                                            setOptions({
-                                                ...options,
-                                                maxWidth: e.target.value
-                                                    ? Number(e.target.value)
-                                                    : undefined,
-                                            })
-                                        }
-                                        min={1}
-                                    />
-                                </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={handleRemoveBackgroundClick}
+                                disabled={
+                                    files.length === 0 ||
+                                    (!removeBg && bgStatus.state === "loading")
+                                }
+                            >
+                                {removeBg ? (
+                                    <RotateCcw className="h-4 w-4" />
+                                ) : (
+                                    <Eraser className="h-4 w-4" />
+                                )}
+                                {removeBg
+                                    ? t.imageTools.background.restore
+                                    : t.imageTools.background.remove}
+                            </Button>
 
-                                <div className="space-y-2">
-                                    <Label
-                                        htmlFor="maxHeight"
-                                        className="text-xs text-muted-foreground"
-                                    >
-                                        {t.imageTools.size.maxHeight}
-                                    </Label>
-                                    <Input
-                                        id="maxHeight"
-                                        type="number"
-                                        placeholder={t.imageTools.size.auto}
-                                        value={options.maxHeight ?? ""}
-                                        onChange={(e) =>
-                                            setOptions({
-                                                ...options,
-                                                maxHeight: e.target.value
-                                                    ? Number(e.target.value)
-                                                    : undefined,
-                                            })
-                                        }
-                                        min={1}
-                                    />
+                            {bgStatus.state === "loading" && (
+                                <div className="space-y-1.5">
+                                    <div className="flex justify-between text-xs text-muted-foreground">
+                                        <span>
+                                            {t.imageTools.background.loading}
+                                        </span>
+                                        <span className="font-mono">
+                                            {Math.round(bgStatus.progress)}%
+                                        </span>
+                                    </div>
+                                    <Progress value={bgStatus.progress} />
                                 </div>
-                            </div>
+                            )}
+                            {bgStatus.state === "error" && (
+                                <p
+                                    className="text-xs text-destructive"
+                                    title={bgStatus.error}
+                                >
+                                    {t.imageTools.background.error}
+                                </p>
+                            )}
+                            {removeBg && options.format === "jpeg" && (
+                                <p className="text-xs text-destructive">
+                                    {t.imageTools.background.jpegWarning}
+                                </p>
+                            )}
                         </SettingSection>
 
                         <div className="h-px bg-border" />
@@ -1496,6 +2250,32 @@ export default function ImageToolsPage() {
                             icon={Circle}
                             title={t.imageTools.style.tab}
                         >
+                            <div className="flex items-center gap-2">
+                                <Checkbox
+                                    id="radiusForSelected"
+                                    checked={radiusForSelected}
+                                    onCheckedChange={(checked) =>
+                                        toggleRadiusForSelected(
+                                            checked === true,
+                                        )
+                                    }
+                                />
+                                <Label
+                                    htmlFor="radiusForSelected"
+                                    className="cursor-pointer font-normal"
+                                >
+                                    {t.imageTools.style.applyToSelected}
+                                    {files.length > 0 && ` (${selectedCount})`}
+                                </Label>
+                            </div>
+                            {!radiusForSelected && previewEntry && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                    {t.imageTools.style.perImage}{" "}
+                                    <span className="font-medium text-foreground">
+                                        {previewEntry.file.name}
+                                    </span>
+                                </p>
+                            )}
                             <div className="grid grid-cols-4 gap-1">
                                 {CORNER_RADIUS_PRESETS.map((preset) => (
                                     <Button
@@ -1508,10 +2288,7 @@ export default function ImageToolsPage() {
                                         size="sm"
                                         className="text-xs px-1"
                                         onClick={() =>
-                                            setOptions({
-                                                ...options,
-                                                cornerRadius: preset.value,
-                                            })
+                                            setCornerRadius(preset.value)
                                         }
                                     >
                                         {preset.label}
@@ -1533,11 +2310,9 @@ export default function ImageToolsPage() {
                                         activeRadius === 9999 ? "Full" : "0"
                                     }
                                     onChange={(e) =>
-                                        setOptions({
-                                            ...options,
-                                            cornerRadius:
-                                                Number(e.target.value) || 0,
-                                        })
+                                        setCornerRadius(
+                                            Number(e.target.value) || 0,
+                                        )
                                     }
                                     className="w-24"
                                     aria-label={t.imageTools.style.cornerRadius}
@@ -1546,10 +2321,7 @@ export default function ImageToolsPage() {
                                     <Slider
                                         value={[Math.min(activeRadius, 500)]}
                                         onValueChange={([value]) =>
-                                            setOptions({
-                                                ...options,
-                                                cornerRadius: value,
-                                            })
+                                            setCornerRadius(value)
                                         }
                                         min={0}
                                         max={500}
@@ -1562,6 +2334,173 @@ export default function ImageToolsPage() {
                                 {t.imageTools.style.description}
                             </p>
                         </SettingSection>
+
+                        <div className="h-px bg-border" />
+
+                        <section className="space-y-3">
+                            <div
+                                role="tablist"
+                                className="grid grid-cols-2 rounded-lg border bg-muted/40 p-0.5"
+                            >
+                                {(
+                                    [
+                                        {
+                                            value: "crop",
+                                            icon: Crop,
+                                            label: t.imageTools.crop.tab,
+                                        },
+                                        {
+                                            value: "size",
+                                            icon: Maximize2,
+                                            label: t.imageTools.size.tab,
+                                        },
+                                    ] as const
+                                ).map((mode) => (
+                                    <button
+                                        key={mode.value}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={
+                                            transformMode === mode.value
+                                        }
+                                        onClick={() =>
+                                            selectTransformMode(mode.value)
+                                        }
+                                        className={cn(
+                                            "flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors",
+                                            transformMode === mode.value
+                                                ? "bg-background text-foreground shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                    >
+                                        <mode.icon className="h-3.5 w-3.5" />
+                                        {mode.label}
+                                    </button>
+                                ))}
+                            </div>
+                            {transformMode === "crop" ? (
+                                <div className="space-y-3">
+                                    {previewEntry && previewNatural ? (
+                                        <>
+                                            <div className="space-y-2">
+                                                <Label className="text-xs text-muted-foreground">
+                                                    {t.imageTools.crop.aspect}
+                                                </Label>
+                                                <div className="grid grid-cols-4 gap-1">
+                                                    {CROP_ASPECT_PRESETS.map(
+                                                        (preset) => (
+                                                            <Button
+                                                                key={
+                                                                    preset.value
+                                                                }
+                                                                variant={
+                                                                    cropAspect ===
+                                                                    preset.value
+                                                                        ? "default"
+                                                                        : "outline"
+                                                                }
+                                                                size="sm"
+                                                                className="px-1 text-xs"
+                                                                onClick={() =>
+                                                                    selectCropAspect(
+                                                                        preset.value,
+                                                                    )
+                                                                }
+                                                            >
+                                                                {preset.value ===
+                                                                "free"
+                                                                    ? t
+                                                                          .imageTools
+                                                                          .crop
+                                                                          .free
+                                                                    : preset.value ===
+                                                                        "original"
+                                                                      ? t
+                                                                            .imageTools
+                                                                            .crop
+                                                                            .original
+                                                                      : preset.value}
+                                                            </Button>
+                                                        ),
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="w-full text-xs"
+                                                onClick={resetCrop}
+                                                disabled={
+                                                    !crops[previewEntry.id]
+                                                }
+                                            >
+                                                <RotateCcw className="h-4 w-4" />
+                                                {t.imageTools.crop.reset}
+                                            </Button>
+
+                                            <p className="text-xs text-muted-foreground">
+                                                {t.imageTools.crop.description}
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground">
+                                            {t.imageTools.crop.noImage}
+                                        </p>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-2">
+                                        <Label
+                                            htmlFor="maxWidth"
+                                            className="text-xs text-muted-foreground"
+                                        >
+                                            {t.imageTools.size.maxWidth}
+                                        </Label>
+                                        <Input
+                                            id="maxWidth"
+                                            type="number"
+                                            placeholder={t.imageTools.size.auto}
+                                            value={options.maxWidth ?? ""}
+                                            onChange={(e) =>
+                                                setOptions({
+                                                    ...options,
+                                                    maxWidth: e.target.value
+                                                        ? Number(e.target.value)
+                                                        : undefined,
+                                                })
+                                            }
+                                            min={1}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label
+                                            htmlFor="maxHeight"
+                                            className="text-xs text-muted-foreground"
+                                        >
+                                            {t.imageTools.size.maxHeight}
+                                        </Label>
+                                        <Input
+                                            id="maxHeight"
+                                            type="number"
+                                            placeholder={t.imageTools.size.auto}
+                                            value={options.maxHeight ?? ""}
+                                            onChange={(e) =>
+                                                setOptions({
+                                                    ...options,
+                                                    maxHeight: e.target.value
+                                                        ? Number(e.target.value)
+                                                        : undefined,
+                                                })
+                                            }
+                                            min={1}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </section>
                     </div>
                 </aside>
             </div>
@@ -1652,7 +2591,7 @@ export default function ImageToolsPage() {
                 className="hidden"
             />
 
-            {isPreviewModalOpen && previewUrl && (
+            {isPreviewModalOpen && previewUrl && previewOutputSize && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm sm:p-6"
                     role="dialog"
@@ -1661,7 +2600,7 @@ export default function ImageToolsPage() {
                     onClick={() => setIsPreviewModalOpen(false)}
                 >
                     <div
-                        className="relative"
+                        className="relative flex flex-col items-center gap-3"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <button
@@ -1672,22 +2611,121 @@ export default function ImageToolsPage() {
                         >
                             <X className="h-4 w-4" />
                         </button>
-                        {/*eslint-disable-next-line*/}
-                        <img
-                            src={previewUrl}
-                            alt="preview full"
-                            className="block object-contain"
-                            style={{
-                                maxWidth: previewOutputSize
-                                    ? `min(${previewOutputSize.width}px, 90vw)`
-                                    : "90vw",
-                                maxHeight: previewOutputSize
-                                    ? `min(${previewOutputSize.height}px, 90vh)`
-                                    : "90vh",
-                                borderRadius: getModalRadius(),
-                            }}
-                            onLoad={handleModalLoad}
-                        />
+                        <div
+                            ref={attachModalViewport}
+                            {...modalPanHandlers}
+                            className={cn(
+                                "max-h-[82vh] max-w-[90vw] overflow-auto",
+                                modalZoom > 1 &&
+                                    "cursor-grab select-none active:cursor-grabbing",
+                            )}
+                        >
+                            <div
+                                ref={setModalFrame}
+                                className="relative shrink-0 overflow-hidden"
+                                style={{
+                                    width: `calc(${getFrameWidth(
+                                        "90vw",
+                                        "82vh",
+                                    )} * ${modalZoom})`,
+                                    aspectRatio: previewOutputSize
+                                        ? `${previewOutputSize.width} / ${previewOutputSize.height}`
+                                        : undefined,
+                                    borderRadius:
+                                        getScaledRadius(modalFrameWidth),
+                                }}
+                            >
+                                {previewStrokes.length > 0 && previewNatural ? (
+                                    <PaintLayer
+                                        src={previewUrl}
+                                        alt="preview full"
+                                        natural={previewNatural}
+                                        strokes={previewStrokes}
+                                        className="absolute max-w-none"
+                                        style={getCropImageStyle(activeCrop)}
+                                    />
+                                ) : (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                        src={previewUrl}
+                                        alt="preview full"
+                                        draggable={false}
+                                        className="absolute max-w-none"
+                                        style={getCropImageStyle(activeCrop)}
+                                    />
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 shadow-lg dark:bg-zinc-900">
+                            <ZoomControls
+                                zoom={modalZoom}
+                                max={MODAL_ZOOM_MAX}
+                                onZoom={changeModalZoom}
+                                labels={zoomLabels}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+            {isBgConsentOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm sm:p-6"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="bg-consent-title"
+                    onClick={() => setIsBgConsentOpen(false)}
+                >
+                    <div
+                        className="w-full max-w-md rounded-xl border bg-background p-6 shadow-lg"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-3">
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
+                                <Eraser className="h-5 w-5" />
+                            </span>
+                            <div className="space-y-1">
+                                <h2
+                                    id="bg-consent-title"
+                                    className="text-base font-semibold"
+                                >
+                                    {t.imageTools.background.consentTitle}
+                                </h2>
+                                <p className="text-sm text-muted-foreground">
+                                    {t.imageTools.background.consentDescription}
+                                </p>
+                            </div>
+                        </div>
+                        <ul className="mt-5 space-y-2.5 text-sm">
+                            <li className="flex items-center gap-2.5">
+                                <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                {t.imageTools.background.consentSize.replace(
+                                    "{size}",
+                                    String(
+                                        BackgroundRemover.getDownloadSizeMB(),
+                                    ),
+                                )}
+                            </li>
+                            <li className="flex items-center gap-2.5">
+                                <ShieldCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                {t.imageTools.background.consentPrivacy}
+                            </li>
+                            <li className="flex items-center gap-2.5">
+                                <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                {t.imageTools.background.consentCache}
+                            </li>
+                        </ul>
+                        <div className="mt-6 flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setIsBgConsentOpen(false)}
+                            >
+                                {t.imageTools.background.consentCancel}
+                            </Button>
+                            <Button onClick={confirmModelDownload} autoFocus>
+                                <Download className="h-4 w-4" />
+                                {t.imageTools.background.consentConfirm}
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1711,12 +2749,34 @@ export default function ImageToolsPage() {
                         >
                             <X className="h-4 w-4" />
                         </button>
-                        {/*eslint-disable-next-line*/}
-                        <img
-                            src={processedPreviewUrl}
-                            alt={selectedProcessedImage.fileName}
-                            className="block max-w-[90vw] max-h-[82vh] object-contain rounded-lg"
-                        />
+                        <div
+                            ref={attachModalViewport}
+                            {...modalPanHandlers}
+                            className={cn(
+                                "max-h-[82vh] max-w-[90vw] overflow-auto rounded-lg",
+                                modalZoom > 1 &&
+                                    "cursor-grab select-none active:cursor-grabbing",
+                            )}
+                        >
+                            {/*eslint-disable-next-line*/}
+                            <img
+                                src={processedPreviewUrl}
+                                alt={selectedProcessedImage.fileName}
+                                draggable={false}
+                                className="block max-w-none"
+                                style={{
+                                    width: `calc(min(${
+                                        selectedProcessedImage.width
+                                    }px, 90vw, calc(82vh * ${
+                                        selectedProcessedImage.width /
+                                        Math.max(
+                                            1,
+                                            selectedProcessedImage.height,
+                                        )
+                                    })) * ${modalZoom})`,
+                                }}
+                            />
+                        </div>
 
                         <div className="flex flex-wrap justify-center items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-zinc-900 shadow-lg">
                             <span className="text-xs font-medium text-foreground truncate max-w-45">
@@ -1753,6 +2813,13 @@ export default function ImageToolsPage() {
                                     </span>
                                 );
                             })()}
+                            <div className="w-px h-3 bg-border" />
+                            <ZoomControls
+                                zoom={modalZoom}
+                                max={MODAL_ZOOM_MAX}
+                                onZoom={changeModalZoom}
+                                labels={zoomLabels}
+                            />
                             <div className="w-px h-3 bg-border" />
                             <Button
                                 size="sm"
