@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
@@ -137,11 +138,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     onClick={onNavigate}
                     title="Ceratora"
                     className={cn(
-                        "font-bold tracking-tight transition-opacity hover:opacity-80",
-                        isCollapsed ? "text-xl" : "text-lg",
+                        "flex items-center gap-2.5 transition-opacity hover:opacity-80",
+                        isCollapsed && "justify-center",
                     )}
                 >
-                    {isCollapsed ? "C" : "Ceratora"}
+                    <Image
+                        src="/logo.svg"
+                        unoptimized
+                        alt="Ceratora"
+                        width={28}
+                        height={28}
+                        className="shrink-0 rounded-md shadow-sm"
+                        priority
+                    />
+                    {!isCollapsed && (
+                        <span className="font-bold tracking-tight text-lg">
+                            Ceratora
+                        </span>
+                    )}
                 </Link>
             </div>
 
@@ -323,8 +337,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             <PanelLeftClose className="h-5 w-5" />
                         )}
                     </Button>
-                    <span className="truncate text-sm font-semibold">
-                        {activeLabel || "Ceratora"}
+                    <span className="flex items-center gap-2 truncate text-sm font-semibold">
+                        <Image
+                            src="/logo.svg"
+                            unoptimized
+                            alt="Ceratora"
+                            width={22}
+                            height={22}
+                            className="shrink-0 rounded lg:hidden"
+                        />
+                        <span className="truncate">{activeLabel || "Ceratora"}</span>
                     </span>
                     <div className="ml-auto flex items-center gap-1 lg:hidden">
                         <DropdownMenu>

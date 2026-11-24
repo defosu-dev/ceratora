@@ -1,9 +1,37 @@
 // lib/imageProcessor.ts
 
 import JSZip from "jszip";
+import { BackgroundRemover } from "./backgroundRemover";
+
+/** Crop area as fractions (0–1) of the source image size. */
+export interface CropRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+export type CropHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+export type PaintTool = "erase" | "brush";
+
+/** A freehand stroke; points and size are fractions of the source image. */
+export interface PaintStroke {
+    tool: PaintTool;
+    /** Brush colour (ignored by the eraser). */
+    color: string;
+    /** Line width as a fraction of the image width. */
+    size: number;
+    points: [number, number][];
+}
 
 export interface ImageProcessingOptions {
     format?: "webp" | "png" | "jpeg";
+    crop?: CropRect;
+    /** Cut out the subject in the browser (see backgroundRemover.ts). */
+    removeBackground?: boolean;
+    /** Eraser / brush strokes, applied after background removal. */
+    strokes?: PaintStroke[];
     quality?: number; // 0-100
     cornerRadius?: number;
     maxSizeKB?: number;
@@ -37,13 +65,28 @@ export class ImageProcessor {
             maintainAspectRatio = true,
             maxWidth,
             maxHeight,
+            crop,
+            removeBackground = false,
+            strokes,
         } = options;
 
-        const imageBitmap = await createImageBitmap(file);
+        const source = removeBackground
+            ? await BackgroundRemover.remove(file)
+            : file;
+        const imageBitmap = await createImageBitmap(source);
+        const image = strokes?.length
+            ? PaintUtils.render(imageBitmap, strokes)
+            : imageBitmap;
 
-        const { width, height } = this.calculateDimensions(
+        const area = CropUtils.getArea(
             imageBitmap.width,
             imageBitmap.height,
+            crop,
+        );
+
+        const { width, height } = this.calculateDimensions(
+            area.width,
+            area.height,
             maxWidth,
             maxHeight,
             maintainAspectRatio,
@@ -61,7 +104,17 @@ export class ImageProcessor {
             ctx.clip();
         }
 
-        ctx.drawImage(imageBitmap, 0, 0, width, height);
+        ctx.drawImage(
+            image,
+            area.x,
+            area.y,
+            area.width,
+            area.height,
+            0,
+            0,
+            width,
+            height,
+        );
         imageBitmap.close();
 
         let blob: Blob;
@@ -195,6 +248,8 @@ export class ImageProcessor {
         options: ImageProcessingOptions = {},
         onProgress?: (processed: number, total: number) => void,
         signal?: AbortSignal,
+        /** Per-file overrides (e.g. crop, corner radius), by index. */
+        fileOptions?: (Partial<ImageProcessingOptions> | undefined)[],
     ): Promise<ProcessedImage[]> {
         const results: ProcessedImage[] = [];
 
@@ -202,7 +257,10 @@ export class ImageProcessor {
             if (signal?.aborted) break;
 
             try {
-                const processed = await this.processImage(files[i], options);
+                const processed = await this.processImage(files[i], {
+                    ...options,
+                    ...fileOptions?.[i],
+                });
                 results.push(processed);
                 onProgress?.(i + 1, files.length);
             } catch (error) {
@@ -526,5 +584,203 @@ export const ImageUtils = {
         };
         bitmap.close();
         return info;
+    },
+};
+
+const clamp = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max);
+
+type Context2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+export const PaintUtils = {
+    /** Draws one stroke onto a canvas of the image (any resolution). */
+    draw(ctx: Context2D, stroke: PaintStroke, width: number, height: number) {
+        const [first, ...rest] = stroke.points;
+        if (!first) return;
+        ctx.save();
+        ctx.globalCompositeOperation =
+            stroke.tool === "erase" ? "destination-out" : "source-over";
+        ctx.strokeStyle = stroke.tool === "erase" ? "#000" : stroke.color;
+        ctx.lineWidth = Math.max(stroke.size * width, 0.5);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(first[0] * width, first[1] * height);
+        // A single click still leaves a round dot.
+        if (rest.length === 0) {
+            ctx.lineTo(first[0] * width + 0.01, first[1] * height);
+        }
+        for (const [x, y] of rest) ctx.lineTo(x * width, y * height);
+        ctx.stroke();
+        ctx.restore();
+    },
+
+    apply(
+        ctx: Context2D,
+        strokes: PaintStroke[],
+        width: number,
+        height: number,
+    ) {
+        for (const stroke of strokes) this.draw(ctx, stroke, width, height);
+    },
+
+    /** The image with the strokes applied, at full resolution. */
+    render(image: ImageBitmap, strokes: PaintStroke[]): OffscreenCanvas {
+        const canvas = new OffscreenCanvas(image.width, image.height);
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(image, 0, 0);
+        this.apply(ctx, strokes, image.width, image.height);
+        return canvas;
+    },
+};
+
+export const CropUtils = {
+    FULL: { x: 0, y: 0, width: 1, height: 1 } as CropRect,
+
+    isFull(crop?: CropRect): boolean {
+        if (!crop) return true;
+        const eps = 0.0005;
+        return (
+            crop.x < eps &&
+            crop.y < eps &&
+            crop.width > 1 - eps &&
+            crop.height > 1 - eps
+        );
+    },
+
+    /** Crop area in source pixels. Mirrored by the page preview. */
+    getArea(
+        width: number,
+        height: number,
+        crop?: CropRect,
+    ): { x: number; y: number; width: number; height: number } {
+        if (!crop || this.isFull(crop)) return { x: 0, y: 0, width, height };
+        const x = clamp(Math.round(crop.x * width), 0, width - 1);
+        const y = clamp(Math.round(crop.y * height), 0, height - 1);
+        return {
+            x,
+            y,
+            width: clamp(Math.round(crop.width * width), 1, width - x),
+            height: clamp(Math.round(crop.height * height), 1, height - y),
+        };
+    },
+
+    /**
+     * Converts a pixel aspect ratio (width / height) into the ratio of
+     * fractional crop sizes for an image of the given size.
+     */
+    toFractionRatio(ratio: number, width: number, height: number): number {
+        return (ratio * height) / width;
+    },
+
+    /** Largest centered crop with the given pixel aspect ratio. */
+    fitAspect(ratio: number, width: number, height: number): CropRect {
+        const r = this.toFractionRatio(ratio, width, height);
+        const w = r >= 1 ? 1 : r;
+        const h = r >= 1 ? 1 / r : 1;
+        return { x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h };
+    },
+
+    move(start: CropRect, dx: number, dy: number): CropRect {
+        return {
+            ...start,
+            x: clamp(start.x + dx, 0, 1 - start.width),
+            y: clamp(start.y + dy, 0, 1 - start.height),
+        };
+    },
+
+    /**
+     * Drags one edge or corner of the crop by (dx, dy) fractions.
+     * `ratio` is a fractional ratio from toFractionRatio, or null for free.
+     */
+    resize(
+        start: CropRect,
+        handle: CropHandle,
+        dx: number,
+        dy: number,
+        ratio: number | null,
+        minWidth = 0.02,
+        minHeight = 0.02,
+    ): CropRect {
+        const moveW = handle.includes("w");
+        const moveE = handle.includes("e");
+        const moveN = handle.includes("n");
+        const moveS = handle.includes("s");
+
+        let left = start.x;
+        let top = start.y;
+        let right = start.x + start.width;
+        let bottom = start.y + start.height;
+
+        if (moveW) left = clamp(left + dx, 0, right - minWidth);
+        if (moveE) right = clamp(right + dx, left + minWidth, 1);
+        if (moveN) top = clamp(top + dy, 0, bottom - minHeight);
+        if (moveS) bottom = clamp(bottom + dy, top + minHeight, 1);
+
+        if (!ratio) {
+            return {
+                x: left,
+                y: top,
+                width: right - left,
+                height: bottom - top,
+            };
+        }
+
+        // Aspect locked: keep the opposite edge (or the center) in place.
+        let width = right - left;
+        let height = bottom - top;
+        const horizontal = moveW || moveE;
+        const vertical = moveN || moveS;
+
+        if (horizontal && !vertical) height = width / ratio;
+        else if (vertical && !horizontal) width = height * ratio;
+        else if (width / ratio > height) height = width / ratio;
+        else width = height * ratio;
+
+        const startRight = start.x + start.width;
+        const startBottom = start.y + start.height;
+        const centerX = start.x + start.width / 2;
+        const centerY = start.y + start.height / 2;
+
+        const maxWidth = moveW
+            ? startRight
+            : moveE
+              ? 1 - start.x
+              : 2 * Math.min(centerX, 1 - centerX);
+        const maxHeight = moveN
+            ? startBottom
+            : moveS
+              ? 1 - start.y
+              : 2 * Math.min(centerY, 1 - centerY);
+
+        if (width < minWidth) {
+            width = minWidth;
+            height = width / ratio;
+        }
+        if (height < minHeight) {
+            height = minHeight;
+            width = height * ratio;
+        }
+        if (width > maxWidth) {
+            width = maxWidth;
+            height = width / ratio;
+        }
+        if (height > maxHeight) {
+            height = maxHeight;
+            width = height * ratio;
+        }
+
+        const x = moveW
+            ? startRight - width
+            : moveE
+              ? start.x
+              : centerX - width / 2;
+        const y = moveN
+            ? startBottom - height
+            : moveS
+              ? start.y
+              : centerY - height / 2;
+
+        return { x, y, width, height };
     },
 };

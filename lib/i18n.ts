@@ -29,6 +29,9 @@ export interface Translations {
         replace: string;
         previewSource: string;
         pickPreview: string;
+        zoomIn: string;
+        zoomOut: string;
+        zoomFit: string;
     };
     imageTools: {
         title: string;
@@ -73,9 +76,48 @@ export interface Translations {
             maxHeight: string;
             auto: string;
         };
+        crop: {
+            tab: string;
+            reset: string;
+            aspect: string;
+            free: string;
+            original: string;
+            area: string;
+            hint: string;
+            description: string;
+            noImage: string;
+        };
+        background: {
+            tab: string;
+            remove: string;
+            loading: string;
+            processing: string;
+            restore: string;
+            error: string;
+            jpegWarning: string;
+            consentTitle: string;
+            consentDescription: string;
+            consentSize: string;
+            consentPrivacy: string;
+            consentCache: string;
+            consentConfirm: string;
+            consentCancel: string;
+        };
+        paint: {
+            tools: string;
+            eraser: string;
+            brush: string;
+            size: string;
+            color: string;
+            undo: string;
+            redo: string;
+            clear: string;
+        };
         style: {
             tab: string;
             cornerRadius: string;
+            applyToSelected: string;
+            perImage: string;
             description: string;
             preview: string;
             previewEmpty: string;
@@ -152,6 +194,9 @@ export const translations: Record<Locale, Translations> = {
             previewSource: "Переглянути джерело",
             pickPreview:
                 "Оберіть зображення у «Джерелах», щоб побачити заокруглення",
+            zoomIn: "Наблизити",
+            zoomOut: "Віддалити",
+            zoomFit: "Вмістити (100%)",
         },
         imageTools: {
             title: "Набір інструментів для роботи з зображеннями",
@@ -198,9 +243,51 @@ export const translations: Record<Locale, Translations> = {
                 maxHeight: "Максимальна висота (px)",
                 auto: "Авто",
             },
+            crop: {
+                tab: "Обрізка",
+                reset: "Скинути обрізку",
+                aspect: "Пропорції",
+                free: "Вільно",
+                original: "Оригінал",
+                area: "Область обрізки",
+                hint: "Перетягуйте рамку або її маркери. Колесо миші чи щипок — наблизити / віддалити, перетягування поза рамкою — переміщення. Стрілки зсувають рамку (Shift — швидше)",
+                description:
+                    "Обрізка задається окремо для кожного зображення. Застосовується лише вибраний режим: обрізка або розмір",
+                noImage: "Завантажте зображення, щоб обрізати його",
+            },
+            background: {
+                tab: "Фон",
+                remove: "Видалити фон",
+                restore: "Повернути фон",
+                loading: "Завантаження моделі",
+                processing: "Видалення фону…",
+                error: "Не вдалося завантажити модель",
+                jpegWarning:
+                    "JPEG не підтримує прозорість — оберіть WEBP або PNG",
+                consentTitle: "Завантажити модель для видалення фону?",
+                consentDescription:
+                    "Видалення фону працює прямо у вашому браузері за допомогою AI-моделі. Її потрібно завантажити один раз.",
+                consentSize: "Завантаження ~{size} MB, лише один раз",
+                consentPrivacy: "Зображення не залишають ваш пристрій",
+                consentCache: "Модель збережеться в кеші браузера",
+                consentConfirm: "Завантажити",
+                consentCancel: "Скасувати",
+            },
+            paint: {
+                tools: "Інструменти малювання",
+                eraser: "Ластик",
+                brush: "Пензель",
+                size: "Розмір пензля",
+                color: "Колір",
+                undo: "Скасувати дію",
+                redo: "Повторити дію",
+                clear: "Очистити малювання",
+            },
             style: {
                 tab: "Стиль",
                 cornerRadius: "Закруглення кутів (px)",
+                applyToSelected: "Однаково для вибраних",
+                perImage: "Для зображення:",
                 description:
                     "Для круглого зображення використайте велике значення (500+) або Full",
                 preview: "Прев'ю",
@@ -275,6 +362,9 @@ export const translations: Record<Locale, Translations> = {
             replace: "Replace files",
             previewSource: "Preview source",
             pickPreview: "Pick an image in Sources to preview the rounding",
+            zoomIn: "Zoom in",
+            zoomOut: "Zoom out",
+            zoomFit: "Fit (100%)",
         },
         imageTools: {
             title: "Image Processing Toolkit",
@@ -321,9 +411,51 @@ export const translations: Record<Locale, Translations> = {
                 maxHeight: "Maximum height (px)",
                 auto: "Auto",
             },
+            crop: {
+                tab: "Crop",
+                reset: "Reset crop",
+                aspect: "Aspect ratio",
+                free: "Free",
+                original: "Original",
+                area: "Crop area",
+                hint: "Drag the frame or its handles. Mouse wheel or pinch to zoom in / out, drag outside the frame to pan. Arrow keys move the frame (Shift for bigger steps)",
+                description:
+                    "Crop is set per image. Only the selected mode is applied: crop or size",
+                noImage: "Upload an image to crop it",
+            },
+            background: {
+                tab: "Background",
+                remove: "Remove background",
+                restore: "Restore background",
+                loading: "Downloading model",
+                processing: "Removing background…",
+                error: "Couldn't load the model",
+                jpegWarning:
+                    "JPEG doesn't support transparency — choose WEBP or PNG",
+                consentTitle: "Download the background removal model?",
+                consentDescription:
+                    "Background removal runs right in your browser using an AI model. It needs to be downloaded once.",
+                consentSize: "~{size} MB download, one time only",
+                consentPrivacy: "Images never leave your device",
+                consentCache: "The model is kept in your browser cache",
+                consentConfirm: "Download",
+                consentCancel: "Cancel",
+            },
+            paint: {
+                tools: "Drawing tools",
+                eraser: "Eraser",
+                brush: "Brush",
+                size: "Brush size",
+                color: "Colour",
+                undo: "Undo",
+                redo: "Redo",
+                clear: "Clear drawing",
+            },
             style: {
                 tab: "Style",
                 cornerRadius: "Corner radius (px)",
+                applyToSelected: "Same for selected",
+                perImage: "For image:",
                 description:
                     "Use large value (500+) or Full for circular image",
                 preview: "Preview",
@@ -400,6 +532,9 @@ export const translations: Record<Locale, Translations> = {
             previewSource: "Просмотреть источник",
             pickPreview:
                 "Выберите изображение в «Источниках», чтобы увидеть закругление",
+            zoomIn: "Приблизить",
+            zoomOut: "Отдалить",
+            zoomFit: "Вместить (100%)",
         },
         imageTools: {
             title: "Набор инструментов для работы с изображениями",
@@ -447,9 +582,51 @@ export const translations: Record<Locale, Translations> = {
                 maxHeight: "Максимальная высота (px)",
                 auto: "Авто",
             },
+            crop: {
+                tab: "Обрезка",
+                reset: "Сбросить обрезку",
+                aspect: "Пропорции",
+                free: "Свободно",
+                original: "Оригинал",
+                area: "Область обрезки",
+                hint: "Перетаскивайте рамку или её маркеры. Колесо мыши или щипок — приблизить / отдалить, перетаскивание вне рамки — перемещение. Стрелки сдвигают рамку (Shift — быстрее)",
+                description:
+                    "Обрезка задаётся отдельно для каждого изображения. Применяется только выбранный режим: обрезка или размер",
+                noImage: "Загрузите изображение, чтобы обрезать его",
+            },
+            background: {
+                tab: "Фон",
+                remove: "Удалить фон",
+                restore: "Вернуть фон",
+                loading: "Загрузка модели",
+                processing: "Удаление фона…",
+                error: "Не удалось загрузить модель",
+                jpegWarning:
+                    "JPEG не поддерживает прозрачность — выберите WEBP или PNG",
+                consentTitle: "Загрузить модель для удаления фона?",
+                consentDescription:
+                    "Удаление фона работает прямо в вашем браузере с помощью AI-модели. Её нужно загрузить один раз.",
+                consentSize: "Загрузка ~{size} MB, только один раз",
+                consentPrivacy: "Изображения не покидают ваше устройство",
+                consentCache: "Модель сохранится в кеше браузера",
+                consentConfirm: "Загрузить",
+                consentCancel: "Отмена",
+            },
+            paint: {
+                tools: "Инструменты рисования",
+                eraser: "Ластик",
+                brush: "Кисть",
+                size: "Размер кисти",
+                color: "Цвет",
+                undo: "Отменить действие",
+                redo: "Повторить действие",
+                clear: "Очистить рисование",
+            },
             style: {
                 tab: "Стиль",
                 cornerRadius: "Закругление углов (px)",
+                applyToSelected: "Одинаково для выбранных",
+                perImage: "Для изображения:",
                 description:
                     "Для круглого изображения используйте большое значение (500+) или Full",
                 preview: "Предпросмотр",
